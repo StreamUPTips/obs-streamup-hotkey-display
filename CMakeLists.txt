@@ -35,9 +35,7 @@ if(BUILD_OUT_OF_TREE)
 endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt::Core Qt::Widgets)
 
-# CURL
-find_package(CURL REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
+# Fix #15: Removed unused CURL dependency
 
 # Determine shared directory path (support both in-tree and out-of-tree builds)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/shared")
