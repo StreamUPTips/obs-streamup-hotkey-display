@@ -1,8 +1,5 @@
 #pragma once
 
-#ifndef STREAMUP_HOTKEY_DISPLAY_SETTINGS_HPP
-#define STREAMUP_HOTKEY_DISPLAY_SETTINGS_HPP
-
 #include <QDialog>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -48,7 +45,6 @@ private:
 	QHBoxLayout *buttonLayout;
 	QHBoxLayout *sceneLayout;
 	QHBoxLayout *sourceLayout;
-	QHBoxLayout *timeLayout;
 	QHBoxLayout *prefixLayout;
 	QHBoxLayout *suffixLayout;
 	QLabel *sceneLabel;
@@ -75,13 +71,17 @@ private:
 	QLabel *whitelistLabel;
 	QLineEdit *whitelistLineEdit;
 
+	// Display format UI elements
+	QLabel *separatorLabel;
+	QLineEdit *separatorLineEdit;
+	QLabel *maxHistoryLabel;
+	QSpinBox *maxHistorySpinBox;
+
 	// Logging UI elements
 	QCheckBox *enableLoggingCheckBox;
 
 private slots:
 	void applySettings();
 	void onSceneChanged(const QString &sceneName);
-	void onDisplayInTextSourceToggled(bool checked); // Slot for checkbox state change
+	void onDisplayInTextSourceToggled(bool checked);
 };
-
-#endif // STREAMUP_HOTKEY_DISPLAY_SETTINGS_HPP

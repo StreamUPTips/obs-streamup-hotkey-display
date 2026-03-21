@@ -1,7 +1,6 @@
 #include "streamup-hotkey-display-settings.hpp"
+#include "streamup-hotkey-display.hpp"
 #include <obs-module.h>
-
-extern obs_data_t *SaveLoadSettingsCallback(obs_data_t *save_data, bool saving);
 
 StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *dock, QWidget *parent)
 	: QDialog(parent),
@@ -10,7 +9,6 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	  buttonLayout(new QHBoxLayout()),
 	  sceneLayout(new QHBoxLayout()),
 	  sourceLayout(new QHBoxLayout()),
-	  timeLayout(new QHBoxLayout()),
 	  prefixLayout(new QHBoxLayout()),
 	  suffixLayout(new QHBoxLayout()),
 	  sceneLabel(new QLabel(obs_module_text("Settings.Label.Scene"), this)),
@@ -34,6 +32,10 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	  capturePunctuationCheckBox(new QCheckBox(obs_module_text("Settings.Checkbox.CapturePunctuation"), this)),
 	  whitelistLabel(new QLabel(obs_module_text("Settings.Label.Whitelist"), this)),
 	  whitelistLineEdit(new QLineEdit(this)),
+	  separatorLabel(new QLabel(obs_module_text("Settings.Label.Separator"), this)),
+	  separatorLineEdit(new QLineEdit(this)),
+	  maxHistoryLabel(new QLabel(obs_module_text("Settings.Label.MaxHistory"), this)),
+	  maxHistorySpinBox(new QSpinBox(this)),
 	  enableLoggingCheckBox(new QCheckBox(obs_module_text("Settings.Checkbox.EnableLogging"), this))
 {
 	setWindowTitle(obs_module_text("Settings.Title"));
@@ -116,7 +118,6 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	textSourceLayout->addLayout(suffixLayout);
 	textSourceGroupBox->setLayout(textSourceLayout);
 
-	// Create and configure time layout
 	QHBoxLayout *timeLayout = new QHBoxLayout();
 	timeLayout->addWidget(timeLabel);
 	timeLayout->addWidget(timeSpinBox);
@@ -145,11 +146,31 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	// Set tooltip for logging checkbox
 	enableLoggingCheckBox->setToolTip(obs_module_text("Settings.Tooltip.EnableLogging"));
 
+	// Configure separator line edit
+	separatorLineEdit->setToolTip(obs_module_text("Settings.Tooltip.Separator"));
+	separatorLineEdit->setPlaceholderText(" + ");
+	separatorLineEdit->setMaximumWidth(80);
+
+	// Configure max history spin box
+	maxHistorySpinBox->setToolTip(obs_module_text("Settings.Tooltip.MaxHistory"));
+	maxHistorySpinBox->setRange(0, 100);
+	maxHistorySpinBox->setSingleStep(1);
+
+	QHBoxLayout *separatorLayout = new QHBoxLayout();
+	separatorLayout->addWidget(separatorLabel);
+	separatorLayout->addWidget(separatorLineEdit);
+
+	QHBoxLayout *maxHistoryLayout = new QHBoxLayout();
+	maxHistoryLayout->addWidget(maxHistoryLabel);
+	maxHistoryLayout->addWidget(maxHistorySpinBox);
+
 	mainLayout->addWidget(displayInTextSourceCheckBox);
-	mainLayout->addWidget(textSourceGroupBox); // Add the group box to the main layout
-	mainLayout->addWidget(singleKeyGroupBox); // Add the single key capture group box
-	mainLayout->addWidget(enableLoggingCheckBox); // Add the logging checkbox
-	mainLayout->addLayout(timeLayout);         // Add the time layout to the main layout
+	mainLayout->addWidget(textSourceGroupBox);
+	mainLayout->addWidget(singleKeyGroupBox);
+	mainLayout->addLayout(separatorLayout);
+	mainLayout->addLayout(maxHistoryLayout);
+	mainLayout->addWidget(enableLoggingCheckBox);
+	mainLayout->addLayout(timeLayout);
 	mainLayout->addLayout(buttonLayout);
 	setLayout(mainLayout);
 
@@ -208,11 +229,17 @@ void StreamupHotkeyDisplaySettings::LoadSettings(obs_data_t *settings)
 	whitelistedKeys = QString::fromUtf8(obs_data_get_string(settings, "whitelistedKeys"));
 	whitelistLineEdit->setText(whitelistedKeys);
 
-	// Logging settings (default to false if not present)
+	// Logging settings
 	enableLogging = obs_data_get_bool(settings, "enableLogging");
 	enableLoggingCheckBox->setChecked(enableLogging);
 
-	onDisplayInTextSourceToggled(displayInTextSource); // Set initial visibility of related settings
+	// Display format settings
+	QString sep = QString::fromUtf8(obs_data_get_string(settings, "keySeparator"));
+	separatorLineEdit->setText(sep.isEmpty() ? " + " : sep);
+	int maxHist = obs_data_get_int(settings, "maxHistory");
+	maxHistorySpinBox->setValue(maxHist > 0 ? maxHist : StyleConstants::DEFAULT_MAX_HISTORY);
+
+	onDisplayInTextSourceToggled(displayInTextSource);
 }
 
 void StreamupHotkeyDisplaySettings::SaveSettings()
@@ -238,6 +265,15 @@ void StreamupHotkeyDisplaySettings::SaveSettings()
 
 	// Logging settings
 	obs_data_set_bool(settings, "enableLogging", enableLoggingCheckBox->isChecked());
+
+	// Display format settings
+	obs_data_set_string(settings, "keySeparator", separatorLineEdit->text().toUtf8().constData());
+	obs_data_set_int(settings, "maxHistory", maxHistorySpinBox->value());
+
+	// Preserve hookEnabled in saved settings
+	if (hotkeyDisplayDock) {
+		obs_data_set_bool(settings, "hookEnabled", hotkeyDisplayDock->isHookEnabled());
+	}
 
 	SaveLoadSettingsCallback(settings, true);
 	obs_data_release(settings);
@@ -265,18 +301,18 @@ void StreamupHotkeyDisplaySettings::applySettings()
 	SaveSettings();
 
 	if (hotkeyDisplayDock) {
-		hotkeyDisplayDock->sceneName = sceneName;
-		hotkeyDisplayDock->textSource = textSource;
-		hotkeyDisplayDock->onScreenTime = onScreenTime;
-		hotkeyDisplayDock->prefix = newPrefix;
-		hotkeyDisplayDock->suffix = newSuffix;
-		hotkeyDisplayDock->setDisplayInTextSource(displayInTextSource); // Apply the setting to the dock
+		hotkeyDisplayDock->setSceneName(sceneName);
+		hotkeyDisplayDock->setTextSource(textSource);
+		hotkeyDisplayDock->setOnScreenTime(onScreenTime);
+		hotkeyDisplayDock->setPrefix(newPrefix);
+		hotkeyDisplayDock->setSuffix(newSuffix);
+		hotkeyDisplayDock->setDisplayInTextSource(displayInTextSource);
+		hotkeyDisplayDock->setMaxHistory(maxHistorySpinBox->value());
 	}
 
 	// Reload settings to update global single key capture variables
 	obs_data_t *reloadedSettings = SaveLoadSettingsCallback(nullptr, false);
 	if (reloadedSettings) {
-		extern void loadSingleKeyCaptureSettings(obs_data_t *settings);
 		loadSingleKeyCaptureSettings(reloadedSettings);
 		obs_data_release(reloadedSettings);
 	}

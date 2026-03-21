@@ -1,4 +1,5 @@
 #include "streamup-hotkey-display-dock.hpp"
+#include "streamup-hotkey-display.hpp"
 #include "streamup-hotkey-display-settings.hpp"
 #include <obs.h>
 #include <QIcon>
@@ -7,40 +8,30 @@
 #include <QThread>
 #include <obs-module.h>
 
+// Fix #17: Platform-specific includes still needed for types used in enableHooks/disableHooks
 #ifdef _WIN32
 #include <windows.h>
-extern HHOOK keyboardHook;
-extern HHOOK mouseHook;
-extern LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
-extern LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam);
 #endif
 
 #ifdef __APPLE__
 #include <ApplicationServices/ApplicationServices.h>
 #include <Carbon/Carbon.h>
-extern CFMachPortRef eventTap;
-extern void startMacOSKeyboardHook();
-extern void stopMacOSKeyboardHook();
-CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon);
 #endif
 
 #ifdef __linux__
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <atomic>
-extern Display *display;
-extern std::atomic<bool> linuxHookRunning;
-extern void startLinuxKeyboardHook();
-extern void stopLinuxKeyboardHook();
 #endif
 
-extern obs_data_t *SaveLoadSettingsCallback(obs_data_t *save_data, bool saving);
+// Fix #17: Extern declarations now come from streamup-hotkey-display.hpp
 
 HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 	: QFrame(parent),
 	  layout(new QVBoxLayout(this)),
 	  toolbar(new QToolBar(this)),
 	  label(new QLabel(this)),
+	  historyList(new QListWidget(this)),
 	  toggleAction(new QAction(this)),
 	  settingsAction(new QAction(this)),
 	  hookEnabled(false),
@@ -50,7 +41,8 @@ HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 	  prefix(""),
 	  suffix(""),
 	  clearTimer(new QTimer(this)),
-	  displayInTextSource(false)
+	  displayInTextSource(false),
+	  maxHistory(StyleConstants::DEFAULT_MAX_HISTORY)
 {
 	// Set object names for theme styling
 	setObjectName("hotkeyDisplayDock");
@@ -108,8 +100,28 @@ HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 	// Add the label layout to main layout with stretch factor 1 (expands to fill space)
 	layout->addLayout(labelLayout, 1);
 
-	// Add spacing between label and toolbar (8px)
-	layout->addSpacing(8);
+	// Add spacing between label and history (4px)
+	layout->addSpacing(4);
+
+	// Configure history list
+	historyList->setObjectName("hotkeyDisplayHistory");
+	historyList->setMaximumHeight(120);
+	historyList->setFrameShape(QFrame::NoFrame);
+	historyList->setSelectionMode(QAbstractItemView::NoSelection);
+	historyList->setFocusPolicy(Qt::NoFocus);
+	historyList->setStyleSheet(
+		"QListWidget { background: palette(base); border: 1px solid palette(mid); border-radius: 4px; font-size: 10pt; }"
+		"QListWidget::item { padding: 2px 8px; }");
+	historyList->setVisible(false);
+
+	// Add history in a horizontal layout with margins
+	QHBoxLayout *historyLayout = new QHBoxLayout();
+	historyLayout->setContentsMargins(8, 0, 8, 0);
+	historyLayout->addWidget(historyList);
+	layout->addLayout(historyLayout);
+
+	// Add spacing between history and toolbar (4px)
+	layout->addSpacing(4);
 
 	// Configure toolbar (matching OBS style)
 	toolbar->setMovable(false);
@@ -183,58 +195,63 @@ HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 	connect(settingsAction, &QAction::triggered, this, &HotkeyDisplayDock::openSettings);
 	connect(clearTimer, &QTimer::timeout, this, &HotkeyDisplayDock::clearDisplay);
 
-	// Load current settings
-	obs_data_t *settings = SaveLoadSettingsCallback(nullptr, false);
-	if (settings) {
-		sceneName = QString::fromUtf8(obs_data_get_string(settings, "sceneName"));
-		textSource = QString::fromUtf8(obs_data_get_string(settings, "textSource"));
-		onScreenTime = obs_data_get_int(settings, "onScreenTime");
-		prefix = QString::fromUtf8(obs_data_get_string(settings, "prefix"));
-		suffix = QString::fromUtf8(obs_data_get_string(settings, "suffix"));
-		displayInTextSource = obs_data_get_bool(settings, "displayInTextSource");
-		hookEnabled = obs_data_get_bool(settings, "hookEnabled");
-
-		// Use helper function to enable hooks if configured
-		if (hookEnabled) {
-			if (enableHooks()) {
-				updateUIState(true);
-			} else {
-				hookEnabled = false;
-				updateUIState(false);
-			}
-		}
-
-		obs_data_release(settings);
-	} else {
-		sceneName = StyleConstants::DEFAULT_SCENE_NAME;
-		textSource = StyleConstants::DEFAULT_TEXT_SOURCE;
-		onScreenTime = StyleConstants::DEFAULT_ONSCREEN_TIME;
-		prefix = "";
-		suffix = "";
-		displayInTextSource = false;
-	}
+	// Settings and hook enabling are handled by obs_module_load() after construction
 }
 
 HotkeyDisplayDock::~HotkeyDisplayDock() {}
+
+void HotkeyDisplayDock::addToHistory(const QString &combination)
+{
+	if (maxHistory <= 0)
+		return;
+
+	historyList->insertItem(0, combination);
+	while (historyList->count() > maxHistory) {
+		delete historyList->takeItem(historyList->count() - 1);
+	}
+	historyList->setVisible(historyList->count() > 0);
+}
 
 void HotkeyDisplayDock::setLog(const QString &log)
 {
 	// Always update the dock's label
 	label->setText(log);
 
+	// Add to history
+	addToHistory(log);
+
 	// Conditionally update the text source based on the setting
 	if (displayInTextSource) {
-		if (sceneName == StyleConstants::DEFAULT_SCENE_NAME || textSource == StyleConstants::DEFAULT_TEXT_SOURCE || textSource.isEmpty()) {
+		if (sceneName == StyleConstants::DEFAULT_SCENE_NAME || textSource == StyleConstants::DEFAULT_TEXT_SOURCE ||
+		    textSource.isEmpty() || textSource == StyleConstants::NO_TEXT_SOURCE) {
 			blog(LOG_WARNING,
 			     "[StreamUP Hotkey Display] Scene or text source is not selected or invalid. Skipping text update.");
-			return;
-		}
+		} else {
+			// Single source lookup: update text and show in one pass
+			obs_source_t *scene = obs_get_source_by_name(textSource.toUtf8().constData());
+			if (scene) {
+				// Update the text content
+				obs_data_t *settings = obs_source_get_settings(scene);
+				QString formattedText = prefix + log + suffix;
+				obs_data_set_string(settings, "text", formattedText.toUtf8().constData());
+				obs_source_update(scene, settings);
+				obs_data_release(settings);
 
-		if (textSource != StyleConstants::NO_TEXT_SOURCE) {
-			updateTextSource(log);
+				// Show the source in the scene
+				obs_source_t *sceneSource = obs_get_source_by_name(sceneName.toUtf8().constData());
+				if (sceneSource) {
+					obs_scene_t *sceneAsScene = obs_scene_from_source(sceneSource);
+					obs_sceneitem_t *item = obs_scene_find_source(sceneAsScene, textSource.toUtf8().constData());
+					if (item) {
+						obs_sceneitem_set_visible(item, true);
+					}
+					obs_source_release(sceneSource);
+				}
+				obs_source_release(scene);
+			} else {
+				blog(LOG_WARNING, "[StreamUP Hotkey Display] Source '%s' not found!", textSource.toUtf8().constData());
+			}
 		}
-
-		showSource();
 	}
 
 	// Restart the timer with the on-screen time value
@@ -307,130 +324,35 @@ void HotkeyDisplayDock::openSettings()
 void HotkeyDisplayDock::clearDisplay()
 {
 	label->clear();
-	hideSource();
-	resetToListeningState(); // Reset to listening state after clearing the display
+	setSourceVisibility(false);
 }
 
-void HotkeyDisplayDock::updateTextSource(const QString &text)
+void HotkeyDisplayDock::setSourceVisibility(bool visible)
 {
-	if (!displayInTextSource || sceneName == StyleConstants::DEFAULT_SCENE_NAME || textSource.isEmpty() ||
+	if (!displayInTextSource) {
+		return;
+	}
+
+	if (sceneName == StyleConstants::DEFAULT_SCENE_NAME || textSource.isEmpty() ||
 	    textSource == StyleConstants::NO_TEXT_SOURCE) {
-		blog(LOG_WARNING,
-		     "[StreamUP Hotkey Display] Scene or text source is not selected or invalid. Skipping text update.");
 		return;
-	}
-
-	if (sceneAndSourceExist() && !textSource.isEmpty()) {
-		obs_source_t *source = obs_get_source_by_name(textSource.toUtf8().constData());
-		if (source) {
-			obs_data_t *settings = obs_source_get_settings(source);
-			QString formattedText = prefix + text + suffix;
-			obs_data_set_string(settings, "text", formattedText.toUtf8().constData());
-			obs_source_update(source, settings);
-			obs_data_release(settings);
-			obs_source_release(source);
-		} else {
-			blog(LOG_WARNING, "[StreamUP Hotkey Display] Source '%s' not found!", textSource.toUtf8().constData());
-		}
-	} else {
-		blog(LOG_WARNING, "[StreamUP Hotkey Display] Text source is empty or does not exist!");
-	}
-}
-
-void HotkeyDisplayDock::showSource()
-{
-	if (!displayInTextSource) {
-		return;
-	}
-
-	if (sceneName == StyleConstants::DEFAULT_SCENE_NAME || textSource.isEmpty() || textSource == StyleConstants::NO_TEXT_SOURCE) {
-		blog(LOG_WARNING,
-		     "[StreamUP Hotkey Display] Scene or text source is not selected or invalid. Skipping show source.");
-		return;
-	}
-
-	if (sceneAndSourceExist()) {
-		obs_source_t *scene = obs_get_source_by_name(sceneName.toUtf8().constData());
-		if (scene) {
-			obs_scene_t *sceneAsScene = obs_scene_from_source(scene);
-			obs_sceneitem_t *item = obs_scene_find_source(sceneAsScene, textSource.toUtf8().constData());
-			if (item) {
-				obs_sceneitem_set_visible(item, true);
-			} else {
-				blog(LOG_WARNING, "[StreamUP Hotkey Display] Scene item '%s' not found in scene '%s'!",
-				     textSource.toUtf8().constData(), sceneName.toUtf8().constData());
-			}
-			obs_source_release(scene);
-		} else {
-			blog(LOG_WARNING, "[StreamUP Hotkey Display] Scene '%s' not found!", sceneName.toUtf8().constData());
-		}
-	} else {
-		blog(LOG_WARNING, "[StreamUP Hotkey Display] Scene name or text source is empty or does not exist!");
-	}
-}
-
-void HotkeyDisplayDock::hideSource()
-{
-	if (!displayInTextSource) {
-		return;
-	}
-
-	if (sceneName == StyleConstants::DEFAULT_SCENE_NAME || textSource.isEmpty() || textSource == StyleConstants::NO_TEXT_SOURCE) {
-		blog(LOG_WARNING,
-		     "[StreamUP Hotkey Display] Scene or text source is not selected or invalid. Skipping hide source.");
-		return;
-	}
-
-	if (sceneAndSourceExist()) {
-		obs_source_t *scene = obs_get_source_by_name(sceneName.toUtf8().constData());
-		if (scene) {
-			obs_scene_t *sceneAsScene = obs_scene_from_source(scene);
-			obs_sceneitem_t *item = obs_scene_find_source(sceneAsScene, textSource.toUtf8().constData());
-			if (item) {
-				obs_sceneitem_set_visible(item, false);
-			} else {
-				blog(LOG_WARNING, "[StreamUP Hotkey Display] Scene item '%s' not found in scene '%s'!",
-				     textSource.toUtf8().constData(), sceneName.toUtf8().constData());
-			}
-			obs_source_release(scene);
-		} else {
-			blog(LOG_WARNING, "[StreamUP Hotkey Display] Scene '%s' not found!", sceneName.toUtf8().constData());
-		}
-	} else {
-		blog(LOG_WARNING, "[StreamUP Hotkey Display] Scene name or text source is empty or does not exist!");
-	}
-}
-
-bool HotkeyDisplayDock::sceneAndSourceExist()
-{
-	if (sceneName.isEmpty() || textSource.isEmpty()) {
-		if (displayInTextSource) {
-			blog(LOG_WARNING, "[StreamUP Hotkey Display] Scene name or text source is empty!");
-		}
-		return false;
 	}
 
 	obs_source_t *scene = obs_get_source_by_name(sceneName.toUtf8().constData());
 	if (!scene) {
-		if (displayInTextSource) {
-			blog(LOG_WARNING, "[StreamUP Hotkey Display] Scene '%s' does not exist!", sceneName.toUtf8().constData());
-		}
-		return false;
+		blog(LOG_WARNING, "[StreamUP Hotkey Display] Scene '%s' not found!", sceneName.toUtf8().constData());
+		return;
 	}
 
 	obs_scene_t *sceneAsScene = obs_scene_from_source(scene);
 	obs_sceneitem_t *item = obs_scene_find_source(sceneAsScene, textSource.toUtf8().constData());
-	obs_source_release(scene);
-
-	if (!item) {
-		if (displayInTextSource) {
-			blog(LOG_WARNING, "[StreamUP Hotkey Display] Source '%s' does not exist in scene '%s'!",
-			     textSource.toUtf8().constData(), sceneName.toUtf8().constData());
-		}
-		return false;
+	if (item) {
+		obs_sceneitem_set_visible(item, visible);
+	} else {
+		blog(LOG_WARNING, "[StreamUP Hotkey Display] Scene item '%s' not found in scene '%s'!",
+		     textSource.toUtf8().constData(), sceneName.toUtf8().constData());
 	}
-
-	return true;
+	obs_source_release(scene);
 }
 
 void HotkeyDisplayDock::stopAllActivities()
@@ -439,38 +361,6 @@ void HotkeyDisplayDock::stopAllActivities()
 		clearTimer->stop();
 	}
 	label->clear();
-}
-
-void HotkeyDisplayDock::resetToListeningState()
-{
-	stopAllActivities();
-	// Ensure the hook is enabled to listen for the next key press
-#ifdef _WIN32
-	if (!keyboardHook) {
-		keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, KeyboardProc, NULL, 0);
-		if (!keyboardHook) {
-			blog(LOG_ERROR, "[StreamUP Hotkey Display] Failed to set keyboard hook!");
-		}
-	}
-#endif
-
-#ifdef __APPLE__
-	if (!eventTap) {
-		startMacOSKeyboardHook();
-		if (!eventTap) {
-			blog(LOG_ERROR, "[StreamUP Hotkey Display] Failed to create event tap!");
-		}
-	}
-#endif
-
-#ifdef __linux__
-	if (!display) {
-		startLinuxKeyboardHook();
-		if (!display) {
-			blog(LOG_ERROR, "[StreamUP Hotkey Display] Failed to open X display!");
-		}
-	}
-#endif
 }
 
 bool HotkeyDisplayDock::enableHooks()
@@ -535,6 +425,7 @@ void HotkeyDisplayDock::disableHooks()
 #endif
 
 	stopAllActivities();
+	setSourceVisibility(false);
 }
 
 void HotkeyDisplayDock::updateUIState(bool enabled)

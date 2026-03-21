@@ -1,4 +1,5 @@
 #include "streamup-hotkey-display-dock.hpp"
+#include "streamup-hotkey-display.hpp"
 #include "streamup-hotkey-display-settings.hpp"
 #include "version.h"
 #include <obs-module.h>
@@ -14,6 +15,7 @@
 #include <atomic>
 #include <QMainWindow>
 #include <QDockWidget>
+#include <QMetaObject>
 #include <util/platform.h>
 #include "obs-websocket-api.h"
 
@@ -59,9 +61,6 @@ std::unordered_set<int> modifierKeys = {VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK
 
 std::unordered_set<int> singleKeys = {VK_INSERT, VK_DELETE, VK_HOME, VK_END, VK_PRIOR, VK_NEXT, VK_F1,  VK_F2,  VK_F3,
 				      VK_F4,     VK_F5,     VK_F6,   VK_F7,  VK_F8,    VK_F9,   VK_F10, VK_F11, VK_F12};
-
-std::unordered_set<int> mouseButtons = {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2};
-std::unordered_set<int> scrollActions = {WM_MOUSEWHEEL, WM_MOUSEHWHEEL};
 
 // Additional key categories for single key capture
 std::unordered_set<int> numpadKeys = {VK_NUMPAD0, VK_NUMPAD1, VK_NUMPAD2, VK_NUMPAD3, VK_NUMPAD4,
@@ -111,6 +110,22 @@ std::unordered_set<int> punctuationKeys = {
 	kVK_ANSI_Slash,         kVK_ANSI_Backslash,    kVK_ANSI_LeftBracket, kVK_ANSI_RightBracket,
 	kVK_ANSI_Grave,         kVK_ANSI_Equal,        kVK_ANSI_Minus,       kVK_Space,
 	kVK_Tab,                kVK_Delete,            kVK_ForwardDelete};
+
+// Fix #6: Proper macOS keycode lookup maps (keycodes are NOT contiguous)
+static const std::unordered_map<char, int> macLetterKeycodes = {
+	{'A', kVK_ANSI_A}, {'B', kVK_ANSI_B}, {'C', kVK_ANSI_C}, {'D', kVK_ANSI_D},
+	{'E', kVK_ANSI_E}, {'F', kVK_ANSI_F}, {'G', kVK_ANSI_G}, {'H', kVK_ANSI_H},
+	{'I', kVK_ANSI_I}, {'J', kVK_ANSI_J}, {'K', kVK_ANSI_K}, {'L', kVK_ANSI_L},
+	{'M', kVK_ANSI_M}, {'N', kVK_ANSI_N}, {'O', kVK_ANSI_O}, {'P', kVK_ANSI_P},
+	{'Q', kVK_ANSI_Q}, {'R', kVK_ANSI_R}, {'S', kVK_ANSI_S}, {'T', kVK_ANSI_T},
+	{'U', kVK_ANSI_U}, {'V', kVK_ANSI_V}, {'W', kVK_ANSI_W}, {'X', kVK_ANSI_X},
+	{'Y', kVK_ANSI_Y}, {'Z', kVK_ANSI_Z}
+};
+static const std::unordered_map<char, int> macDigitKeycodes = {
+	{'0', kVK_ANSI_0}, {'1', kVK_ANSI_1}, {'2', kVK_ANSI_2}, {'3', kVK_ANSI_3},
+	{'4', kVK_ANSI_4}, {'5', kVK_ANSI_5}, {'6', kVK_ANSI_6}, {'7', kVK_ANSI_7},
+	{'8', kVK_ANSI_8}, {'9', kVK_ANSI_9}
+};
 #endif
 
 #ifdef __linux__
@@ -154,8 +169,12 @@ std::unordered_set<int> whitelistedKeySet;
 // Logging settings
 bool enableLogging = false;
 
+// Display settings
+std::string keySeparator = " + ";
+std::string lastKeyCombination;
+
 HotkeyDisplayDock *hotkeyDisplayDock = nullptr;
-StreamupHotkeyDisplaySettings *settingsDialog = nullptr;
+obs_hotkey_id toggleHotkeyId = OBS_INVALID_HOTKEY_ID;
 obs_websocket_vendor websocket_vendor = nullptr;
 
 // Key name lookup tables for performance
@@ -210,9 +229,9 @@ static const std::unordered_map<int, const char *> keyNameMap = {
 	{XK_F11, "F11"},           {XK_F12, "F12"}};
 #endif
 
-bool isModifierKeyPressed()
+// Lock-free variant — caller must hold keyStateMutex
+static bool isModifierKeyPressedLocked()
 {
-	std::lock_guard<std::mutex> lock(keyStateMutex);
 	for (const int key : activeModifiers) {
 		if (pressedKeys.count(key)) {
 			return true;
@@ -241,10 +260,9 @@ std::string getKeyName(int vkCode)
 	return "Unknown";
 }
 
-std::string getCurrentCombination()
+// Lock-free variant — caller must hold keyStateMutex
+static std::string getCurrentCombinationLocked()
 {
-	std::lock_guard<std::mutex> lock(keyStateMutex);
-
 	std::vector<int> orderedKeys;
 #ifdef _WIN32
 	orderedKeys = {VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_LWIN,   VK_RWIN,  VK_MENU,
@@ -261,12 +279,17 @@ std::string getCurrentCombination()
 #endif
 
 	std::vector<std::string> keys;
-	keys.reserve(pressedKeys.size()); // Pre-allocate space for efficiency
+	keys.reserve(pressedKeys.size());
 
-	// Add modifier keys in order
+	// Add modifier keys in order, deduplicating display names
+	// (e.g. both VK_LCONTROL and VK_RCONTROL map to "Ctrl")
+	std::unordered_set<std::string> addedModifierNames;
 	for (const int key : orderedKeys) {
 		if (pressedKeys.count(key)) {
-			keys.push_back(getKeyName(key));
+			std::string name = getKeyName(key);
+			if (addedModifierNames.insert(name).second) {
+				keys.push_back(name);
+			}
 		}
 	}
 
@@ -277,12 +300,12 @@ std::string getCurrentCombination()
 		}
 	}
 
-	// Join keys with " + " separator
+	// Join keys with configured separator
 	std::string combination;
 	if (!keys.empty()) {
 		combination = keys[0];
 		for (size_t i = 1; i < keys.size(); ++i) {
-			combination += " + " + keys[i];
+			combination += keySeparator + keys[i];
 		}
 	}
 
@@ -318,10 +341,9 @@ bool shouldCaptureSingleKey(int keyCode)
 	return false;
 }
 
-bool shouldLogCombination()
+// Lock-free variant — caller must hold keyStateMutex
+static bool shouldLogCombinationLocked()
 {
-	std::lock_guard<std::mutex> lock(keyStateMutex);
-
 	// Check if SHIFT is the only modifier
 	bool onlyShiftPressed = false;
 #ifdef _WIN32
@@ -348,6 +370,8 @@ bool shouldLogCombination()
 
 void emitWebSocketEvent(const std::string &keyCombination)
 {
+	lastKeyCombination = keyCombination;
+
 	if (!websocket_vendor) {
 		return;
 	}
@@ -379,52 +403,48 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 	if (nCode == HC_ACTION) {
 		KBDLLHOOKSTRUCT *p = (KBDLLHOOKSTRUCT *)lParam;
 		if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
+			std::string keyCombination;
+			bool shouldLog = false;
 			{
 				std::lock_guard<std::mutex> lock(keyStateMutex);
 				pressedKeys.insert(p->vkCode);
 				if (modifierKeys.count(p->vkCode)) {
 					activeModifiers.insert(p->vkCode);
 				}
-			}
 
-			if ((pressedKeys.size() > 1 && isModifierKeyPressed() && shouldLogCombination()) ||
-			    (shouldCaptureSingleKey(p->vkCode) && !activeModifiers.count(VK_SHIFT) && !activeModifiers.count(VK_LSHIFT) &&
-			     !activeModifiers.count(VK_RSHIFT))) {
-				std::string keyCombination = getCurrentCombination();
-				bool shouldLog = false;
-				{
-					std::lock_guard<std::mutex> lock(keyStateMutex);
+				bool comboTrigger = pressedKeys.size() > 1 && isModifierKeyPressedLocked() && shouldLogCombinationLocked();
+				bool singleTrigger = !comboTrigger && shouldCaptureSingleKey(p->vkCode) && !isModifierKeyPressedLocked();
+
+				if (comboTrigger) {
+					keyCombination = getCurrentCombinationLocked();
+				} else if (singleTrigger) {
+					keyCombination = getKeyName(p->vkCode);
+				}
+
+				if (!keyCombination.empty()) {
 					if (loggedCombinations.find(keyCombination) == loggedCombinations.end()) {
 						loggedCombinations.insert(keyCombination);
 						shouldLog = true;
 					}
 				}
-				if (shouldLog) {
-					if (enableLogging) {
-						blog(LOG_INFO, "[StreamUP Hotkey Display] Keys pressed: %s", keyCombination.c_str());
-					}
-					if (hotkeyDisplayDock) {
-						hotkeyDisplayDock->setLog(QString::fromStdString(keyCombination));
-					}
-					emitWebSocketEvent(keyCombination);
+			}
+			if (shouldLog) {
+				if (enableLogging) {
+					blog(LOG_INFO, "[StreamUP Hotkey Display] Keys pressed: %s", keyCombination.c_str());
 				}
+				if (hotkeyDisplayDock) {
+					QMetaObject::invokeMethod(hotkeyDisplayDock, "setLog", Qt::QueuedConnection,
+						Q_ARG(QString, QString::fromStdString(keyCombination)));
+				}
+				emitWebSocketEvent(keyCombination);
 			}
 		} else if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
-			bool shouldClearCombinations = false;
-			{
-				std::lock_guard<std::mutex> lock(keyStateMutex);
-				pressedKeys.erase(p->vkCode);
-				if (modifierKeys.count(p->vkCode)) {
-					activeModifiers.erase(p->vkCode);
-				}
-
-				// Check if we should clear combinations while holding the lock
-				if (activeModifiers.empty() ||
-				    std::none_of(activeModifiers.begin(), activeModifiers.end(),
-				                 [](int key) { return pressedKeys.count(key) > 0; })) {
-					loggedCombinations.clear();
-				}
+			std::lock_guard<std::mutex> lock(keyStateMutex);
+			pressedKeys.erase(p->vkCode);
+			if (modifierKeys.count(p->vkCode)) {
+				activeModifiers.erase(p->vkCode);
 			}
+			loggedCombinations.clear();
 		}
 	}
 	return CallNextHookEx(keyboardHook, nCode, wParam, lParam);
@@ -435,31 +455,39 @@ LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam)
 	if (nCode == HC_ACTION) {
 		MSLLHOOKSTRUCT *p = (MSLLHOOKSTRUCT *)lParam;
 
-		// Only proceed if a modifier key is pressed
-		if (isModifierKeyPressed()) {
-			std::string keyCombination = getCurrentCombination(); // Get current key combination with any modifiers
+		std::string keyCombination;
+		bool hasModifier = false;
+		{
+			std::lock_guard<std::mutex> lock(keyStateMutex);
+			hasModifier = isModifierKeyPressedLocked();
+			if (hasModifier) {
+				keyCombination = getCurrentCombinationLocked();
+			}
+		}
+
+		if (hasModifier) {
 
 			bool actionDetected = false;
 
 			// Handle mouse button clicks
 			switch (wParam) {
 			case WM_LBUTTONDOWN:
-				keyCombination += " + Left Click";
+				keyCombination += keySeparator + "Left Click";
 				actionDetected = true;
 				break;
 			case WM_RBUTTONDOWN:
-				keyCombination += " + Right Click";
+				keyCombination += keySeparator + "Right Click";
 				actionDetected = true;
 				break;
 			case WM_MBUTTONDOWN:
-				keyCombination += " + Middle Click";
+				keyCombination += keySeparator + "Middle Click";
 				actionDetected = true;
 				break;
 			case WM_XBUTTONDOWN:
 				if (HIWORD(p->mouseData) == XBUTTON1) {
-					keyCombination += " + X Button 1";
+					keyCombination += keySeparator + "X Button 1";
 				} else if (HIWORD(p->mouseData) == XBUTTON2) {
-					keyCombination += " + X Button 2";
+					keyCombination += keySeparator + "X Button 2";
 				}
 				actionDetected = true;
 				break;
@@ -468,28 +496,30 @@ LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam)
 			// Handle scroll actions
 			if (wParam == WM_MOUSEWHEEL) {
 				if (GET_WHEEL_DELTA_WPARAM(p->mouseData) > 0)
-					keyCombination += " + Scroll Up";
+					keyCombination += keySeparator + "Scroll Up";
 				else
-					keyCombination += " + Scroll Down";
+					keyCombination += keySeparator + "Scroll Down";
 				actionDetected = true;
 			} else if (wParam == WM_MOUSEHWHEEL) {
 				if (GET_WHEEL_DELTA_WPARAM(p->mouseData) > 0)
-					keyCombination += " + Scroll Right";
+					keyCombination += keySeparator + "Scroll Right";
 				else
-					keyCombination += " + Scroll Left";
+					keyCombination += keySeparator + "Scroll Left";
 				actionDetected = true;
 			}
 
-			// Log and display the key combination if an action was detected
+			// Fix #4: Cleaned up double if(enableLogging) check
+			// Fix #5: Added emitWebSocketEvent for mouse actions
+			// Fix #1: Use QueuedConnection for cross-thread Qt GUI access
 			if (actionDetected) {
 				if (enableLogging) {
-			if (enableLogging) {
 					blog(LOG_INFO, "[StreamUP Hotkey Display] Mouse action detected: %s", keyCombination.c_str());
 				}
-			}
 				if (hotkeyDisplayDock) {
-					hotkeyDisplayDock->setLog(QString::fromStdString(keyCombination));
+					QMetaObject::invokeMethod(hotkeyDisplayDock, "setLog", Qt::QueuedConnection,
+						Q_ARG(QString, QString::fromStdString(keyCombination)));
 				}
+				emitWebSocketEvent(keyCombination);
 			}
 		}
 	}
@@ -500,8 +530,6 @@ LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam)
 
 #ifdef __APPLE__
 CFMachPortRef eventTap = nullptr;
-
-CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon);
 
 bool checkMacOSAccessibilityPermissions()
 {
@@ -538,7 +566,8 @@ void startMacOSKeyboardHook()
 				CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventRightMouseDown) |
 				CGEventMaskBit(kCGEventOtherMouseDown) | CGEventMaskBit(kCGEventScrollWheel);
 
-	eventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
+	// Fix #14: Use kCGEventTapOptionListenOnly since the plugin only monitors events
+	eventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionListenOnly,
 				    eventMask, CGEventCallback, nullptr);
 
 	if (!eventTap) {
@@ -570,97 +599,112 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
 	(void)proxy;
 	(void)refcon;
 
+	// Re-enable event tap if the system disabled it
+	if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+		if (eventTap) {
+			CGEventTapEnable(eventTap, true);
+			blog(LOG_WARNING, "[StreamUP Hotkey Display] macOS event tap was disabled, re-enabled");
+		}
+		return event;
+	}
+
 	// Handle keyboard events
 	if (type == kCGEventKeyDown || type == kCGEventKeyUp) {
 		CGKeyCode keyCode = (CGKeyCode)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
-		bool keyDown = (type == kCGEventKeyDown);
 
-		if (keyDown) {
-			{
-				std::lock_guard<std::mutex> lock(keyStateMutex);
-				pressedKeys.insert(keyCode);
-				if (modifierKeys.count(keyCode)) {
-					activeModifiers.insert(keyCode);
-				}
+		std::string keyCombination;
+		bool shouldLog = false;
+
+		if (type == kCGEventKeyDown) {
+			std::lock_guard<std::mutex> lock(keyStateMutex);
+			pressedKeys.insert(keyCode);
+			if (modifierKeys.count(keyCode)) {
+				activeModifiers.insert(keyCode);
 			}
-		} else {
-			{
-				std::lock_guard<std::mutex> lock(keyStateMutex);
-				pressedKeys.erase(keyCode);
-				if (modifierKeys.count(keyCode)) {
-					activeModifiers.erase(keyCode);
-				}
 
-				// Check if we should clear combinations while holding the lock
-				if (activeModifiers.empty() ||
-				    std::none_of(activeModifiers.begin(), activeModifiers.end(),
-				                 [](int key) { return pressedKeys.count(key) > 0; })) {
-					loggedCombinations.clear();
-				}
+			bool comboTrigger = pressedKeys.size() > 1 && isModifierKeyPressedLocked() && shouldLogCombinationLocked();
+			bool singleTrigger = !comboTrigger && shouldCaptureSingleKey(keyCode) && !isModifierKeyPressedLocked();
+
+			if (comboTrigger) {
+				keyCombination = getCurrentCombinationLocked();
+			} else if (singleTrigger) {
+				keyCombination = getKeyName(keyCode);
 			}
-		}
 
-		if ((pressedKeys.size() > 1 && isModifierKeyPressed() && shouldLogCombination()) ||
-		    (shouldCaptureSingleKey(keyCode) && !activeModifiers.count(kVK_Shift) && !activeModifiers.count(kVK_RightShift))) {
-			std::string keyCombination = getCurrentCombination();
-			bool shouldLog = false;
-			{
-				std::lock_guard<std::mutex> lock(keyStateMutex);
+			if (!keyCombination.empty()) {
 				if (loggedCombinations.find(keyCombination) == loggedCombinations.end()) {
 					loggedCombinations.insert(keyCombination);
 					shouldLog = true;
 				}
 			}
-			if (shouldLog) {
-				if (enableLogging) {
-				blog(LOG_INFO, "[StreamUP Hotkey Display] Keys pressed: %s", keyCombination.c_str());
-				}
-				if (hotkeyDisplayDock) {
-					hotkeyDisplayDock->setLog(QString::fromStdString(keyCombination));
-				}
-				emitWebSocketEvent(keyCombination);
+		} else {
+			std::lock_guard<std::mutex> lock(keyStateMutex);
+			pressedKeys.erase(keyCode);
+			if (modifierKeys.count(keyCode)) {
+				activeModifiers.erase(keyCode);
 			}
+			loggedCombinations.clear();
+		}
+
+		if (shouldLog) {
+			if (enableLogging) {
+				blog(LOG_INFO, "[StreamUP Hotkey Display] Keys pressed: %s", keyCombination.c_str());
+			}
+			if (hotkeyDisplayDock) {
+				QMetaObject::invokeMethod(hotkeyDisplayDock, "setLog", Qt::QueuedConnection,
+					Q_ARG(QString, QString::fromStdString(keyCombination)));
+			}
+			emitWebSocketEvent(keyCombination);
 		}
 	}
 	// Handle mouse events (only when modifier keys are pressed)
 	else if (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown ||
 	         type == kCGEventOtherMouseDown || type == kCGEventScrollWheel) {
-		if (isModifierKeyPressed()) {
-			std::string keyCombination = getCurrentCombination();
+		std::string keyCombination;
+		bool hasModifier = false;
+		{
+			std::lock_guard<std::mutex> lock(keyStateMutex);
+			hasModifier = isModifierKeyPressedLocked();
+			if (hasModifier) {
+				keyCombination = getCurrentCombinationLocked();
+			}
+		}
 
-			// Add mouse action to combination
+		if (hasModifier) {
 			if (type == kCGEventLeftMouseDown) {
-				keyCombination += " + Left Click";
+				keyCombination += keySeparator + "Left Click";
 			} else if (type == kCGEventRightMouseDown) {
-				keyCombination += " + Right Click";
+				keyCombination += keySeparator + "Right Click";
 			} else if (type == kCGEventOtherMouseDown) {
 				int64_t buttonNumber = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
 				if (buttonNumber == 2) {
-					keyCombination += " + Middle Click";
+					keyCombination += keySeparator + "Middle Click";
 				} else {
-					keyCombination += " + Button " + std::to_string(buttonNumber + 1);
+					keyCombination += keySeparator + "Button " + std::to_string(buttonNumber + 1);
 				}
 			} else if (type == kCGEventScrollWheel) {
 				int64_t deltaY = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1);
 				int64_t deltaX = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis2);
 
 				if (deltaY > 0) {
-					keyCombination += " + Scroll Up";
+					keyCombination += keySeparator + "Scroll Up";
 				} else if (deltaY < 0) {
-					keyCombination += " + Scroll Down";
+					keyCombination += keySeparator + "Scroll Down";
 				} else if (deltaX > 0) {
-					keyCombination += " + Scroll Right";
+					keyCombination += keySeparator + "Scroll Right";
 				} else if (deltaX < 0) {
-					keyCombination += " + Scroll Left";
+					keyCombination += keySeparator + "Scroll Left";
 				}
 			}
 
 			if (enableLogging) {
-			blog(LOG_INFO, "[StreamUP Hotkey Display] Mouse action detected: %s", keyCombination.c_str());
+				blog(LOG_INFO, "[StreamUP Hotkey Display] Mouse action detected: %s", keyCombination.c_str());
+			}
 			if (hotkeyDisplayDock) {
-				hotkeyDisplayDock->setLog(QString::fromStdString(keyCombination));
+				QMetaObject::invokeMethod(hotkeyDisplayDock, "setLog", Qt::QueuedConnection,
+					Q_ARG(QString, QString::fromStdString(keyCombination)));
 			}
-			}
+			emitWebSocketEvent(keyCombination);
 		}
 	}
 	return event;
@@ -711,101 +755,108 @@ void linuxKeyboardHookThreadFunc()
 			XNextEvent(display, &event);
 			if (event.type == KeyPress) {
 				KeySym keysym = XLookupKeysym(&event.xkey, 0);
-				int keyCode = XKeysymToKeycode(display, keysym);
+				std::string keyCombination;
+				bool shouldLog = false;
 				{
 					std::lock_guard<std::mutex> lock(keyStateMutex);
-					pressedKeys.insert(keyCode);
-					if (modifierKeys.count(keyCode)) {
-						activeModifiers.insert(keyCode);
+					pressedKeys.insert(keysym);
+					if (modifierKeys.count(keysym)) {
+						activeModifiers.insert(keysym);
 					}
-				}
 
-				if ((pressedKeys.size() > 1 && isModifierKeyPressed() && shouldLogCombination()) ||
-				    (shouldCaptureSingleKey(keyCode) && !activeModifiers.count(XK_Shift_L) &&
-				     !activeModifiers.count(XK_Shift_R))) {
-					std::string keyCombination = getCurrentCombination();
-					bool shouldLog = false;
-					{
-						std::lock_guard<std::mutex> lock(keyStateMutex);
+					bool comboTrigger = pressedKeys.size() > 1 && isModifierKeyPressedLocked() && shouldLogCombinationLocked();
+					bool singleTrigger = !comboTrigger && shouldCaptureSingleKey(keysym) && !isModifierKeyPressedLocked();
+
+					if (comboTrigger) {
+						keyCombination = getCurrentCombinationLocked();
+					} else if (singleTrigger) {
+						keyCombination = getKeyName(keysym);
+					}
+
+					if (!keyCombination.empty()) {
 						if (loggedCombinations.find(keyCombination) == loggedCombinations.end()) {
 							loggedCombinations.insert(keyCombination);
 							shouldLog = true;
 						}
 					}
-					if (shouldLog) {
-				if (enableLogging) {
-						blog(LOG_INFO, "[StreamUP Hotkey Display] Keys pressed: %s", keyCombination.c_str());
 				}
-						if (hotkeyDisplayDock) {
-							hotkeyDisplayDock->setLog(QString::fromStdString(keyCombination));
-						}
-						emitWebSocketEvent(keyCombination);
+				if (shouldLog) {
+					if (enableLogging) {
+						blog(LOG_INFO, "[StreamUP Hotkey Display] Keys pressed: %s", keyCombination.c_str());
 					}
+					if (hotkeyDisplayDock) {
+						QMetaObject::invokeMethod(hotkeyDisplayDock, "setLog", Qt::QueuedConnection,
+							Q_ARG(QString, QString::fromStdString(keyCombination)));
+					}
+					emitWebSocketEvent(keyCombination);
 				}
 			} else if (event.type == KeyRelease) {
 				KeySym keysym = XLookupKeysym(&event.xkey, 0);
-				int keyCode = XKeysymToKeycode(display, keysym);
-				{
-					std::lock_guard<std::mutex> lock(keyStateMutex);
-					pressedKeys.erase(keyCode);
-					if (modifierKeys.count(keyCode)) {
-						activeModifiers.erase(keyCode);
-					}
-
-					// Check if we should clear combinations while holding the lock
-					if (activeModifiers.empty() ||
-					    std::none_of(activeModifiers.begin(), activeModifiers.end(),
-					                 [](int key) { return pressedKeys.count(key) > 0; })) {
-						loggedCombinations.clear();
-					}
+				std::lock_guard<std::mutex> lock(keyStateMutex);
+				pressedKeys.erase(keysym);
+				if (modifierKeys.count(keysym)) {
+					activeModifiers.erase(keysym);
+				}
+				if (activeModifiers.empty() ||
+				    std::none_of(activeModifiers.begin(), activeModifiers.end(),
+				                 [](int key) { return pressedKeys.count(key) > 0; })) {
+					loggedCombinations.clear();
 				}
 			} else if (event.type == ButtonPress) {
-				// Handle mouse button clicks (only when modifier keys are pressed)
-				if (isModifierKeyPressed()) {
-					std::string keyCombination = getCurrentCombination();
+				std::string keyCombination;
+				bool hasModifier = false;
+				{
+					std::lock_guard<std::mutex> lock(keyStateMutex);
+					hasModifier = isModifierKeyPressedLocked();
+					if (hasModifier) {
+						keyCombination = getCurrentCombinationLocked();
+					}
+				}
 
-					// X11 button numbers: 1=Left, 2=Middle, 3=Right, 4=ScrollUp, 5=ScrollDown, 8=Back, 9=Forward
+				if (hasModifier) {
 					unsigned int button = event.xbutton.button;
 					switch (button) {
 					case 1:
-						keyCombination += " + Left Click";
+						keyCombination += keySeparator + "Left Click";
 						break;
 					case 2:
-						keyCombination += " + Middle Click";
+						keyCombination += keySeparator + "Middle Click";
 						break;
 					case 3:
-						keyCombination += " + Right Click";
+						keyCombination += keySeparator + "Right Click";
 						break;
 					case 4:
-						keyCombination += " + Scroll Up";
+						keyCombination += keySeparator + "Scroll Up";
 						break;
 					case 5:
-						keyCombination += " + Scroll Down";
+						keyCombination += keySeparator + "Scroll Down";
 						break;
 					case 6:
-						keyCombination += " + Scroll Left";
+						keyCombination += keySeparator + "Scroll Left";
 						break;
 					case 7:
-						keyCombination += " + Scroll Right";
+						keyCombination += keySeparator + "Scroll Right";
 						break;
 					case 8:
-						keyCombination += " + Back Button";
+						keyCombination += keySeparator + "Back Button";
 						break;
 					case 9:
-						keyCombination += " + Forward Button";
+						keyCombination += keySeparator + "Forward Button";
 						break;
 					default:
-						keyCombination += " + Button " + std::to_string(button);
+						keyCombination += keySeparator + "Button " + std::to_string(button);
 						break;
 					}
 
-			if (enableLogging) {
-					blog(LOG_INFO, "[StreamUP Hotkey Display] Mouse action detected: %s",
-					     keyCombination.c_str());
-					if (hotkeyDisplayDock) {
-						hotkeyDisplayDock->setLog(QString::fromStdString(keyCombination));
+					if (enableLogging) {
+						blog(LOG_INFO, "[StreamUP Hotkey Display] Mouse action detected: %s",
+						     keyCombination.c_str());
 					}
-			}
+					if (hotkeyDisplayDock) {
+						QMetaObject::invokeMethod(hotkeyDisplayDock, "setLog", Qt::QueuedConnection,
+							Q_ARG(QString, QString::fromStdString(keyCombination)));
+					}
+					emitWebSocketEvent(keyCombination);
 				}
 			}
 		}
@@ -819,11 +870,27 @@ void linuxKeyboardHookThreadFunc()
 	blog(LOG_INFO, "[StreamUP Hotkey Display] Linux keyboard hook thread stopped");
 }
 
+static bool isWaylandSession()
+{
+	const char *sessionType = getenv("XDG_SESSION_TYPE");
+	const char *waylandDisplay = getenv("WAYLAND_DISPLAY");
+	return (sessionType && strcmp(sessionType, "wayland") == 0) || (waylandDisplay && strlen(waylandDisplay) > 0);
+}
+
 void startLinuxKeyboardHook()
 {
 	if (linuxHookRunning) {
 		blog(LOG_WARNING, "[StreamUP Hotkey Display] Linux hook already running");
 		return;
+	}
+
+	if (isWaylandSession()) {
+		blog(LOG_WARNING, "[StreamUP Hotkey Display] Wayland session detected. Global keyboard capture requires X11.");
+		blog(LOG_WARNING, "[StreamUP Hotkey Display] Try running OBS with XWayland or set QT_QPA_PLATFORM=xcb");
+		if (hotkeyDisplayDock) {
+			QMetaObject::invokeMethod(hotkeyDisplayDock, "setLog", Qt::QueuedConnection,
+				Q_ARG(QString, QString::fromUtf8(obs_module_text("Warning.Wayland"))));
+		}
 	}
 
 	linuxHookRunning = true;
@@ -864,6 +931,25 @@ void LoadHotkeyDisplayDock()
 	obs_frontend_pop_ui_translation();
 }
 
+static void applySettingsDefaults(obs_data_t *data)
+{
+	obs_data_set_default_string(data, "sceneName", StyleConstants::DEFAULT_SCENE_NAME);
+	obs_data_set_default_string(data, "textSource", StyleConstants::DEFAULT_TEXT_SOURCE);
+	obs_data_set_default_int(data, "onScreenTime", StyleConstants::DEFAULT_ONSCREEN_TIME);
+	obs_data_set_default_bool(data, "displayInTextSource", false);
+	obs_data_set_default_string(data, "prefix", "");
+	obs_data_set_default_string(data, "suffix", "");
+	obs_data_set_default_bool(data, "hookEnabled", false);
+	obs_data_set_default_bool(data, "captureNumpad", false);
+	obs_data_set_default_bool(data, "captureNumbers", false);
+	obs_data_set_default_bool(data, "captureLetters", false);
+	obs_data_set_default_bool(data, "capturePunctuation", false);
+	obs_data_set_default_string(data, "whitelistedKeys", "");
+	obs_data_set_default_bool(data, "enableLogging", false);
+	obs_data_set_default_string(data, "keySeparator", " + ");
+	obs_data_set_default_int(data, "maxHistory", 10);
+}
+
 obs_data_t *SaveLoadSettingsCallback(obs_data_t *save_data, bool saving)
 {
 	char *configPath = obs_module_config_path("configs.json");
@@ -898,6 +984,10 @@ obs_data_t *SaveLoadSettingsCallback(obs_data_t *save_data, bool saving)
 		} else {
 			blog(LOG_INFO, "[StreamUP Hotkey Display] Settings loaded successfully from %s", configPath);
 		}
+	}
+
+	if (data) {
+		applySettingsDefaults(data);
 	}
 
 	bfree(configPath);
@@ -937,22 +1027,31 @@ void parseWhitelistKeys(const QString &whitelist)
 		else if (trimmedKey == "TAB") whitelistedKeySet.insert(VK_TAB);
 		else if (trimmedKey == "ENTER") whitelistedKeySet.insert(VK_RETURN);
 		else if (trimmedKey == "ESC" || trimmedKey == "ESCAPE") whitelistedKeySet.insert(VK_ESCAPE);
+		else if (trimmedKey.startsWith("F") && trimmedKey.length() >= 2) {
+			bool ok = false;
+			int fNum = trimmedKey.mid(1).toInt(&ok);
+			if (ok && fNum >= 1 && fNum <= 12) {
+				whitelistedKeySet.insert(VK_F1 + fNum - 1);
+			}
+		}
 #endif
 
 #ifdef __APPLE__
-		// Single character keys
+		// Fix #6: Use proper lookup maps instead of arithmetic on non-contiguous keycodes
 		if (trimmedKey.length() == 1) {
 			QChar ch = trimmedKey[0];
 			if (ch.isLetter()) {
-				// Map A-Z to kVK_ANSI_A through kVK_ANSI_Z
-				int offset = ch.unicode() - 'A';
-				if (offset >= 0 && offset < 26) {
-					whitelistedKeySet.insert(kVK_ANSI_A + offset);
+				char upper = ch.unicode();
+				auto it = macLetterKeycodes.find(upper);
+				if (it != macLetterKeycodes.end()) {
+					whitelistedKeySet.insert(it->second);
 				}
 			} else if (ch.isDigit()) {
-				// Map 0-9 to kVK_ANSI_0 through kVK_ANSI_9
-				int digit = ch.digitValue();
-				whitelistedKeySet.insert(kVK_ANSI_0 + digit);
+				char digit = ch.unicode();
+				auto it = macDigitKeycodes.find(digit);
+				if (it != macDigitKeycodes.end()) {
+					whitelistedKeySet.insert(it->second);
+				}
 			}
 		}
 		// Special key names
@@ -960,6 +1059,16 @@ void parseWhitelistKeys(const QString &whitelist)
 		else if (trimmedKey == "TAB") whitelistedKeySet.insert(kVK_Tab);
 		else if (trimmedKey == "ENTER") whitelistedKeySet.insert(kVK_Return);
 		else if (trimmedKey == "ESC" || trimmedKey == "ESCAPE") whitelistedKeySet.insert(kVK_Escape);
+		else if (trimmedKey.startsWith("F") && trimmedKey.length() >= 2) {
+			bool ok = false;
+			int fNum = trimmedKey.mid(1).toInt(&ok);
+			if (ok && fNum >= 1 && fNum <= 12) {
+				// macOS F-key codes: kVK_F1=0x7A, kVK_F2=0x78, etc. — not contiguous
+				static const int macFKeys[] = {kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6,
+					kVK_F7, kVK_F8, kVK_F9, kVK_F10, kVK_F11, kVK_F12};
+				whitelistedKeySet.insert(macFKeys[fNum - 1]);
+			}
+		}
 #endif
 
 #ifdef __linux__
@@ -983,6 +1092,13 @@ void parseWhitelistKeys(const QString &whitelist)
 		else if (trimmedKey == "TAB") whitelistedKeySet.insert(XK_Tab);
 		else if (trimmedKey == "ENTER") whitelistedKeySet.insert(XK_Return);
 		else if (trimmedKey == "ESC" || trimmedKey == "ESCAPE") whitelistedKeySet.insert(XK_Escape);
+		else if (trimmedKey.startsWith("F") && trimmedKey.length() >= 2) {
+			bool ok = false;
+			int fNum = trimmedKey.mid(1).toInt(&ok);
+			if (ok && fNum >= 1 && fNum <= 12) {
+				whitelistedKeySet.insert(XK_F1 + fNum - 1);
+			}
+		}
 #endif
 	}
 }
@@ -1001,8 +1117,11 @@ void loadSingleKeyCaptureSettings(obs_data_t *settings)
 	QString whitelist = QString::fromUtf8(obs_data_get_string(settings, "whitelistedKeys"));
 	parseWhitelistKeys(whitelist);
 
-	// Load logging settings (default to false)
 	enableLogging = obs_data_get_bool(settings, "enableLogging");
+
+	// Load separator (default " + ")
+	const char *sep = obs_data_get_string(settings, "keySeparator");
+	keySeparator = (sep && strlen(sep) > 0) ? sep : " + ";
 }
 
 void loadDockSettings(HotkeyDisplayDock *dock, obs_data_t *settings)
@@ -1011,24 +1130,21 @@ void loadDockSettings(HotkeyDisplayDock *dock, obs_data_t *settings)
 		return;
 	}
 
-	// Load settings with defaults
-	dock->sceneName = QString::fromUtf8(obs_data_get_string(settings, "sceneName"));
-	dock->textSource = QString::fromUtf8(obs_data_get_string(settings, "textSource"));
-	dock->onScreenTime = obs_data_get_int(settings, "onScreenTime");
-	dock->prefix = QString::fromUtf8(obs_data_get_string(settings, "prefix"));
-	dock->suffix = QString::fromUtf8(obs_data_get_string(settings, "suffix"));
+	QString scene = QString::fromUtf8(obs_data_get_string(settings, "sceneName"));
+	dock->setSceneName(scene.isEmpty() ? StyleConstants::DEFAULT_SCENE_NAME : scene);
+
+	QString source = QString::fromUtf8(obs_data_get_string(settings, "textSource"));
+	dock->setTextSource(source.isEmpty() ? StyleConstants::DEFAULT_TEXT_SOURCE : source);
+
+	int time = obs_data_get_int(settings, "onScreenTime");
+	dock->setOnScreenTime(time > 0 ? time : StyleConstants::DEFAULT_ONSCREEN_TIME);
+
+	dock->setPrefix(QString::fromUtf8(obs_data_get_string(settings, "prefix")));
+	dock->setSuffix(QString::fromUtf8(obs_data_get_string(settings, "suffix")));
 	dock->setDisplayInTextSource(obs_data_get_bool(settings, "displayInTextSource"));
 
-	// Apply defaults if empty
-	if (dock->sceneName.isEmpty()) {
-		dock->sceneName = StyleConstants::DEFAULT_SCENE_NAME;
-	}
-	if (dock->textSource.isEmpty()) {
-		dock->textSource = StyleConstants::DEFAULT_TEXT_SOURCE;
-	}
-	if (dock->onScreenTime == 0) {
-		dock->onScreenTime = StyleConstants::DEFAULT_ONSCREEN_TIME;
-	}
+	int maxHist = obs_data_get_int(settings, "maxHistory");
+	dock->setMaxHistory(maxHist > 0 ? maxHist : StyleConstants::DEFAULT_MAX_HISTORY);
 }
 
 void applyDockUISettings(HotkeyDisplayDock *dock, bool hookEnabled)
@@ -1048,15 +1164,21 @@ void applyDockUISettings(HotkeyDisplayDock *dock, bool hookEnabled)
 	label->style()->polish(label);
 }
 
+static void toggleHotkeyCallback(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed)
+{
+	(void)id;
+	(void)hotkey;
+	(void)data;
+	if (!pressed || !hotkeyDisplayDock)
+		return;
+
+	// Hotkey callbacks run on a non-UI thread — marshal to main thread
+	QMetaObject::invokeMethod(hotkeyDisplayDock, "toggleKeyboardHook", Qt::QueuedConnection);
+}
+
 bool obs_module_load()
 {
 	blog(LOG_INFO, "[StreamUP Hotkey Display] loaded version %s", PROJECT_VERSION);
-
-	websocket_vendor = obs_websocket_register_vendor("streamup-hotkey-display");
-	if (!websocket_vendor) {
-		blog(LOG_ERROR, "[StreamUP Hotkey Display] Failed to register websocket vendor!");
-		return false;
-	}
 
 	LoadHotkeyDisplayDock();
 
@@ -1066,21 +1188,82 @@ bool obs_module_load()
 		loadDockSettings(hotkeyDisplayDock, settings);
 		loadSingleKeyCaptureSettings(settings);
 		bool hookEnabled = obs_data_get_bool(settings, "hookEnabled");
-		hotkeyDisplayDock->setHookEnabled(hookEnabled);
+		if (hookEnabled) {
+			if (hotkeyDisplayDock->enableHooks()) {
+				hotkeyDisplayDock->setHookEnabled(true);
+			} else {
+				hookEnabled = false;
+				hotkeyDisplayDock->setHookEnabled(false);
+			}
+		}
 		applyDockUISettings(hotkeyDisplayDock, hookEnabled);
 		obs_data_release(settings);
 	} else if (hotkeyDisplayDock) {
-		// Apply defaults if no settings loaded
-		hotkeyDisplayDock->sceneName = StyleConstants::DEFAULT_SCENE_NAME;
-		hotkeyDisplayDock->textSource = StyleConstants::DEFAULT_TEXT_SOURCE;
-		hotkeyDisplayDock->onScreenTime = StyleConstants::DEFAULT_ONSCREEN_TIME;
-		hotkeyDisplayDock->prefix = "";
-		hotkeyDisplayDock->suffix = "";
+		hotkeyDisplayDock->setSceneName(StyleConstants::DEFAULT_SCENE_NAME);
+		hotkeyDisplayDock->setTextSource(StyleConstants::DEFAULT_TEXT_SOURCE);
+		hotkeyDisplayDock->setOnScreenTime(StyleConstants::DEFAULT_ONSCREEN_TIME);
+		hotkeyDisplayDock->setPrefix("");
+		hotkeyDisplayDock->setSuffix("");
 		hotkeyDisplayDock->setDisplayInTextSource(false);
 		applyDockUISettings(hotkeyDisplayDock, false);
 	}
 
+	// Register OBS hotkey for toggle
+	toggleHotkeyId = obs_hotkey_register_frontend("streamup_hotkey_display_toggle",
+		obs_module_text("Hotkey.Toggle"), toggleHotkeyCallback, nullptr);
+
 	return true;
+}
+
+// WebSocket request callbacks
+static void wsGetStatus(obs_data_t *request_data, obs_data_t *response_data, void *priv_data)
+{
+	(void)request_data;
+	(void)priv_data;
+	obs_data_set_bool(response_data, "enabled", hotkeyDisplayDock ? hotkeyDisplayDock->isHookEnabled() : false);
+	obs_data_set_string(response_data, "last_combination", lastKeyCombination.c_str());
+}
+
+static void wsEnable(obs_data_t *request_data, obs_data_t *response_data, void *priv_data)
+{
+	(void)request_data;
+	(void)priv_data;
+	if (hotkeyDisplayDock && !hotkeyDisplayDock->isHookEnabled()) {
+		QMetaObject::invokeMethod(hotkeyDisplayDock, "toggleKeyboardHook", Qt::QueuedConnection);
+	}
+	obs_data_set_bool(response_data, "success", true);
+}
+
+static void wsDisable(obs_data_t *request_data, obs_data_t *response_data, void *priv_data)
+{
+	(void)request_data;
+	(void)priv_data;
+	if (hotkeyDisplayDock && hotkeyDisplayDock->isHookEnabled()) {
+		QMetaObject::invokeMethod(hotkeyDisplayDock, "toggleKeyboardHook", Qt::QueuedConnection);
+	}
+	obs_data_set_bool(response_data, "success", true);
+}
+
+static void wsGetLastCombination(obs_data_t *request_data, obs_data_t *response_data, void *priv_data)
+{
+	(void)request_data;
+	(void)priv_data;
+	obs_data_set_string(response_data, "combination", lastKeyCombination.c_str());
+}
+
+// WebSocket vendor registration in obs_module_post_load (correct lifecycle)
+void obs_module_post_load()
+{
+	websocket_vendor = obs_websocket_register_vendor("streamup-hotkey-display");
+	if (!websocket_vendor) {
+		blog(LOG_WARNING, "[StreamUP Hotkey Display] obs-websocket not found, WebSocket features disabled");
+		return;
+	}
+
+	obs_websocket_vendor_register_request(websocket_vendor, "get_status", wsGetStatus, nullptr);
+	obs_websocket_vendor_register_request(websocket_vendor, "enable", wsEnable, nullptr);
+	obs_websocket_vendor_register_request(websocket_vendor, "disable", wsDisable, nullptr);
+	obs_websocket_vendor_register_request(websocket_vendor, "get_last_combination", wsGetLastCombination, nullptr);
 }
 
 void obs_module_unload()
@@ -1100,10 +1283,11 @@ void obs_module_unload()
 	stopLinuxKeyboardHook();
 #endif
 
-	if (websocket_vendor) {
-		obs_websocket_vendor_unregister_request(websocket_vendor, "streamup_hotkey_display");
-		websocket_vendor = nullptr;
+	if (toggleHotkeyId != OBS_INVALID_HOTKEY_ID) {
+		obs_hotkey_unregister(toggleHotkeyId);
 	}
+
+	websocket_vendor = nullptr;
 }
 
 MODULE_EXPORT const char *obs_module_description(void)
