@@ -3,7 +3,8 @@
 ---
 
 ## v1.2.0 (12 Apr '26)
-**Patch Focus:** StreamUP UI design system & settings redesign
+**Patch Focus:** Standalone mouse capture, StreamUP UI design system & settings redesign
+- Added standalone mouse action capture toggle. Mouse clicks, scrolls, and extra buttons can now be displayed without holding a modifier key. Opt-in via "Standalone Mouse Actions" in Single Key Capture settings
 - Migrated settings dialog to the StreamUP frameless design system with Catppuccin Mocha theming
 - Replaced all QCheckBox controls with SwitchWidget toggles for visual consistency across StreamUP plugins
 - Replaced standard buttons with styled buttons throughout settings
