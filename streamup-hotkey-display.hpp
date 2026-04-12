@@ -22,6 +22,21 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
 #ifdef __linux__
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+// X11 defines macros that clash with Qt enums (QEvent::None, QEvent::KeyPress, etc.)
+// Save X11 constants before undefining, so Linux hook code can still use them
+constexpr int X11_KeyPress = KeyPress;
+constexpr int X11_KeyRelease = KeyRelease;
+#undef None
+#undef KeyPress
+#undef KeyRelease
+#undef Status
+#undef Bool
+#undef CursorShape
+#undef Expose
+#undef FocusIn
+#undef FocusOut
+#undef FontChange
+#undef Unsorted
 #include <atomic>
 extern Display *display;
 extern std::atomic<bool> linuxHookRunning;

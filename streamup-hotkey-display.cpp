@@ -756,7 +756,7 @@ void linuxKeyboardHookThreadFunc()
 		// Process all pending events
 		while (linuxHookRunning && XPending(display)) {
 			XNextEvent(display, &event);
-			if (event.type == KeyPress) {
+			if (event.type == X11_KeyPress) {
 				KeySym keysym = XLookupKeysym(&event.xkey, 0);
 				std::string keyCombination;
 				bool shouldLog = false;
@@ -793,7 +793,7 @@ void linuxKeyboardHookThreadFunc()
 					}
 					emitWebSocketEvent(keyCombination);
 				}
-			} else if (event.type == KeyRelease) {
+			} else if (event.type == X11_KeyRelease) {
 				KeySym keysym = XLookupKeysym(&event.xkey, 0);
 				std::lock_guard<std::mutex> lock(keyStateMutex);
 				pressedKeys.erase(keysym);
