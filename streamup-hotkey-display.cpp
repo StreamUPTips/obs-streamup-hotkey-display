@@ -164,6 +164,7 @@ bool captureNumpad = false;
 bool captureNumbers = false;
 bool captureLetters = false;
 bool capturePunctuation = false;
+bool captureStandaloneMouse = false;
 std::unordered_set<int> whitelistedKeySet;
 
 // Logging settings
@@ -468,29 +469,29 @@ LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam)
 			}
 		}
 
-		if (hasModifier) {
+		if (hasModifier || captureStandaloneMouse) {
 
 			bool actionDetected = false;
 
 			// Handle mouse button clicks
 			switch (wParam) {
 			case WM_LBUTTONDOWN:
-				keyCombination += keySeparator + "Left Click";
+				keyCombination += (hasModifier ? keySeparator : "") + std::string("Left Click");
 				actionDetected = true;
 				break;
 			case WM_RBUTTONDOWN:
-				keyCombination += keySeparator + "Right Click";
+				keyCombination += (hasModifier ? keySeparator : "") + std::string("Right Click");
 				actionDetected = true;
 				break;
 			case WM_MBUTTONDOWN:
-				keyCombination += keySeparator + "Middle Click";
+				keyCombination += (hasModifier ? keySeparator : "") + std::string("Middle Click");
 				actionDetected = true;
 				break;
 			case WM_XBUTTONDOWN:
 				if (HIWORD(p->mouseData) == XBUTTON1) {
-					keyCombination += keySeparator + "X Button 1";
+					keyCombination += (hasModifier ? keySeparator : "") + std::string("X Button 1");
 				} else if (HIWORD(p->mouseData) == XBUTTON2) {
-					keyCombination += keySeparator + "X Button 2";
+					keyCombination += (hasModifier ? keySeparator : "") + std::string("X Button 2");
 				}
 				actionDetected = true;
 				break;
@@ -499,21 +500,18 @@ LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam)
 			// Handle scroll actions
 			if (wParam == WM_MOUSEWHEEL) {
 				if (GET_WHEEL_DELTA_WPARAM(p->mouseData) > 0)
-					keyCombination += keySeparator + "Scroll Up";
+					keyCombination += (hasModifier ? keySeparator : "") + std::string("Scroll Up");
 				else
-					keyCombination += keySeparator + "Scroll Down";
+					keyCombination += (hasModifier ? keySeparator : "") + std::string("Scroll Down");
 				actionDetected = true;
 			} else if (wParam == WM_MOUSEHWHEEL) {
 				if (GET_WHEEL_DELTA_WPARAM(p->mouseData) > 0)
-					keyCombination += keySeparator + "Scroll Right";
+					keyCombination += (hasModifier ? keySeparator : "") + std::string("Scroll Right");
 				else
-					keyCombination += keySeparator + "Scroll Left";
+					keyCombination += (hasModifier ? keySeparator : "") + std::string("Scroll Left");
 				actionDetected = true;
 			}
 
-			// Fix #4: Cleaned up double if(enableLogging) check
-			// Fix #5: Added emitWebSocketEvent for mouse actions
-			// Fix #1: Use QueuedConnection for cross-thread Qt GUI access
 			if (actionDetected) {
 				if (enableLogging) {
 					blog(LOG_INFO, "[StreamUP Hotkey Display] Mouse action detected: %s", keyCombination.c_str());
@@ -660,7 +658,7 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
 			emitWebSocketEvent(keyCombination);
 		}
 	}
-	// Handle mouse events (only when modifier keys are pressed)
+	// Handle mouse events
 	else if (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown ||
 	         type == kCGEventOtherMouseDown || type == kCGEventScrollWheel) {
 		std::string keyCombination;
@@ -673,30 +671,31 @@ CGEventRef CGEventCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef e
 			}
 		}
 
-		if (hasModifier) {
+		if (hasModifier || captureStandaloneMouse) {
+			std::string sep = hasModifier ? keySeparator : "";
 			if (type == kCGEventLeftMouseDown) {
-				keyCombination += keySeparator + "Left Click";
+				keyCombination += sep + "Left Click";
 			} else if (type == kCGEventRightMouseDown) {
-				keyCombination += keySeparator + "Right Click";
+				keyCombination += sep + "Right Click";
 			} else if (type == kCGEventOtherMouseDown) {
 				int64_t buttonNumber = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
 				if (buttonNumber == 2) {
-					keyCombination += keySeparator + "Middle Click";
+					keyCombination += sep + "Middle Click";
 				} else {
-					keyCombination += keySeparator + "Button " + std::to_string(buttonNumber + 1);
+					keyCombination += sep + "Button " + std::to_string(buttonNumber + 1);
 				}
 			} else if (type == kCGEventScrollWheel) {
 				int64_t deltaY = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1);
 				int64_t deltaX = CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis2);
 
 				if (deltaY > 0) {
-					keyCombination += keySeparator + "Scroll Up";
+					keyCombination += sep + "Scroll Up";
 				} else if (deltaY < 0) {
-					keyCombination += keySeparator + "Scroll Down";
+					keyCombination += sep + "Scroll Down";
 				} else if (deltaX > 0) {
-					keyCombination += keySeparator + "Scroll Right";
+					keyCombination += sep + "Scroll Right";
 				} else if (deltaX < 0) {
-					keyCombination += keySeparator + "Scroll Left";
+					keyCombination += sep + "Scroll Left";
 				}
 			}
 
@@ -816,38 +815,39 @@ void linuxKeyboardHookThreadFunc()
 					}
 				}
 
-				if (hasModifier) {
+				if (hasModifier || captureStandaloneMouse) {
+					std::string sep = hasModifier ? keySeparator : "";
 					unsigned int button = event.xbutton.button;
 					switch (button) {
 					case 1:
-						keyCombination += keySeparator + "Left Click";
+						keyCombination += sep + "Left Click";
 						break;
 					case 2:
-						keyCombination += keySeparator + "Middle Click";
+						keyCombination += sep + "Middle Click";
 						break;
 					case 3:
-						keyCombination += keySeparator + "Right Click";
+						keyCombination += sep + "Right Click";
 						break;
 					case 4:
-						keyCombination += keySeparator + "Scroll Up";
+						keyCombination += sep + "Scroll Up";
 						break;
 					case 5:
-						keyCombination += keySeparator + "Scroll Down";
+						keyCombination += sep + "Scroll Down";
 						break;
 					case 6:
-						keyCombination += keySeparator + "Scroll Left";
+						keyCombination += sep + "Scroll Left";
 						break;
 					case 7:
-						keyCombination += keySeparator + "Scroll Right";
+						keyCombination += sep + "Scroll Right";
 						break;
 					case 8:
-						keyCombination += keySeparator + "Back Button";
+						keyCombination += sep + "Back Button";
 						break;
 					case 9:
-						keyCombination += keySeparator + "Forward Button";
+						keyCombination += sep + "Forward Button";
 						break;
 					default:
-						keyCombination += keySeparator + "Button " + std::to_string(button);
+						keyCombination += sep + "Button " + std::to_string(button);
 						break;
 					}
 
@@ -947,6 +947,7 @@ static void applySettingsDefaults(obs_data_t *data)
 	obs_data_set_default_bool(data, "captureNumbers", false);
 	obs_data_set_default_bool(data, "captureLetters", false);
 	obs_data_set_default_bool(data, "capturePunctuation", false);
+	obs_data_set_default_bool(data, "captureStandaloneMouse", false);
 	obs_data_set_default_string(data, "whitelistedKeys", "");
 	obs_data_set_default_bool(data, "enableLogging", false);
 	obs_data_set_default_string(data, "keySeparator", " + ");
@@ -1116,6 +1117,7 @@ void loadSingleKeyCaptureSettings(obs_data_t *settings)
 	captureNumbers = obs_data_get_bool(settings, "captureNumbers");
 	captureLetters = obs_data_get_bool(settings, "captureLetters");
 	capturePunctuation = obs_data_get_bool(settings, "capturePunctuation");
+	captureStandaloneMouse = obs_data_get_bool(settings, "captureStandaloneMouse");
 
 	QString whitelist = QString::fromUtf8(obs_data_get_string(settings, "whitelistedKeys"));
 	parseWhitelistKeys(whitelist);

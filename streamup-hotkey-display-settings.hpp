@@ -35,6 +35,7 @@ public:
 	bool captureNumbers;
 	bool captureLetters;
 	bool capturePunctuation;
+	bool captureStandaloneMouse;
 	QString whitelistedKeys;
 
 	// Logging settings
@@ -69,6 +70,7 @@ private:
 	SwitchWidget *captureNumbersCheckBox;
 	SwitchWidget *captureLettersCheckBox;
 	SwitchWidget *capturePunctuationCheckBox;
+	SwitchWidget *captureStandaloneMouseCheckBox;
 	QLabel *whitelistLabel;
 	QPlainTextEdit *whitelistTextEdit;
 

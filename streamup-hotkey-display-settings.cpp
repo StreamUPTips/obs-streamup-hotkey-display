@@ -26,6 +26,7 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	  captureNumbersCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CaptureNumbers"), this)),
 	  captureLettersCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CaptureLetters"), this)),
 	  capturePunctuationCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CapturePunctuation"), this)),
+	  captureStandaloneMouseCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CaptureStandaloneMouse"), this)),
 	  whitelistLabel(new QLabel(obs_module_text("Settings.Label.Whitelist"), this)),
 	  separatorLabel(new QLabel(obs_module_text("Settings.Label.Separator"), this)),
 	  separatorLineEdit(new QLineEdit(this)),
@@ -165,6 +166,7 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	singleKeyLayout->addWidget(captureNumbersCheckBox);
 	singleKeyLayout->addWidget(captureLettersCheckBox);
 	singleKeyLayout->addWidget(capturePunctuationCheckBox);
+	singleKeyLayout->addWidget(captureStandaloneMouseCheckBox);
 	singleKeyLayout->addWidget(whitelistLabel);
 	singleKeyLayout->addWidget(whitelistTextEdit);
 	singleKeyGroupBox->setLayout(singleKeyLayout);
@@ -174,6 +176,7 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	captureNumbersCheckBox->setToolTip(obs_module_text("Settings.Tooltip.CaptureNumbers"));
 	captureLettersCheckBox->setToolTip(obs_module_text("Settings.Tooltip.CaptureLetters"));
 	capturePunctuationCheckBox->setToolTip(obs_module_text("Settings.Tooltip.CapturePunctuation"));
+	captureStandaloneMouseCheckBox->setToolTip(obs_module_text("Settings.Tooltip.CaptureStandaloneMouse"));
 	whitelistTextEdit->setToolTip(obs_module_text("Settings.Tooltip.Whitelist"));
 	whitelistTextEdit->setPlaceholderText(obs_module_text("Settings.Placeholder.Whitelist"));
 
@@ -293,6 +296,8 @@ void StreamupHotkeyDisplaySettings::LoadSettings(obs_data_t *settings)
 	captureLettersCheckBox->setChecked(captureLetters);
 	capturePunctuation = obs_data_get_bool(settings, "capturePunctuation");
 	capturePunctuationCheckBox->setChecked(capturePunctuation);
+	captureStandaloneMouse = obs_data_get_bool(settings, "captureStandaloneMouse");
+	captureStandaloneMouseCheckBox->setChecked(captureStandaloneMouse);
 	whitelistedKeys = QString::fromUtf8(obs_data_get_string(settings, "whitelistedKeys"));
 	whitelistTextEdit->setPlainText(whitelistedKeys);
 
@@ -328,6 +333,7 @@ void StreamupHotkeyDisplaySettings::SaveSettings()
 	obs_data_set_bool(settings, "captureNumbers", captureNumbersCheckBox->isChecked());
 	obs_data_set_bool(settings, "captureLetters", captureLettersCheckBox->isChecked());
 	obs_data_set_bool(settings, "capturePunctuation", capturePunctuationCheckBox->isChecked());
+	obs_data_set_bool(settings, "captureStandaloneMouse", captureStandaloneMouseCheckBox->isChecked());
 	obs_data_set_string(settings, "whitelistedKeys", whitelistTextEdit->toPlainText().toUtf8().constData());
 
 	// Logging settings
@@ -360,6 +366,7 @@ void StreamupHotkeyDisplaySettings::applySettings()
 	captureNumbers = captureNumbersCheckBox->isChecked();
 	captureLetters = captureLettersCheckBox->isChecked();
 	capturePunctuation = capturePunctuationCheckBox->isChecked();
+	captureStandaloneMouse = captureStandaloneMouseCheckBox->isChecked();
 	whitelistedKeys = whitelistTextEdit->toPlainText();
 
 	// Logging settings
