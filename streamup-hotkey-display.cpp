@@ -177,6 +177,9 @@ HotkeyDisplayDock *hotkeyDisplayDock = nullptr;
 obs_hotkey_id toggleHotkeyId = OBS_INVALID_HOTKEY_ID;
 obs_websocket_vendor websocket_vendor = nullptr;
 
+// Deferred hook enable: hooks must be installed after the event loop is running
+static bool deferredHookEnable = false;
+
 // Key name lookup tables for performance
 #ifdef _WIN32
 static const std::unordered_map<int, const char *> keyNameMap = {
@@ -1176,6 +1179,30 @@ static void toggleHotkeyCallback(void *data, obs_hotkey_id id, obs_hotkey_t *hot
 	QMetaObject::invokeMethod(hotkeyDisplayDock, "toggleKeyboardHook", Qt::QueuedConnection);
 }
 
+static void frontendEventCallback(enum obs_frontend_event event, void *data)
+{
+	(void)data;
+
+	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
+		// Event loop is now running — safe to install low-level hooks
+		if (deferredHookEnable && hotkeyDisplayDock) {
+			if (hotkeyDisplayDock->enableHooks()) {
+				hotkeyDisplayDock->setHookEnabled(true);
+			} else {
+				hotkeyDisplayDock->setHookEnabled(false);
+			}
+			applyDockUISettings(hotkeyDisplayDock, hotkeyDisplayDock->isHookEnabled());
+			deferredHookEnable = false;
+		}
+	} else if (event == OBS_FRONTEND_EVENT_EXIT) {
+		// Unhook BEFORE the event loop stops — prevents system-wide input lag during shutdown
+		if (hotkeyDisplayDock && hotkeyDisplayDock->isHookEnabled()) {
+			hotkeyDisplayDock->disableHooks();
+			hotkeyDisplayDock->setHookEnabled(false);
+		}
+	}
+}
+
 bool obs_module_load()
 {
 	blog(LOG_INFO, "[StreamUP Hotkey Display] loaded version %s", PROJECT_VERSION);
@@ -1189,14 +1216,14 @@ bool obs_module_load()
 		loadSingleKeyCaptureSettings(settings);
 		bool hookEnabled = obs_data_get_bool(settings, "hookEnabled");
 		if (hookEnabled) {
-			if (hotkeyDisplayDock->enableHooks()) {
-				hotkeyDisplayDock->setHookEnabled(true);
-			} else {
-				hookEnabled = false;
-				hotkeyDisplayDock->setHookEnabled(false);
-			}
+			// Defer hook installation until the event loop is running.
+			// Low-level hooks (WH_KEYBOARD_LL, WH_MOUSE_LL) require the
+			// installing thread to pump messages. During obs_module_load the
+			// Qt event loop isn't running yet, so hooks time out on every
+			// input event and lag the entire system.
+			deferredHookEnable = true;
 		}
-		applyDockUISettings(hotkeyDisplayDock, hookEnabled);
+		applyDockUISettings(hotkeyDisplayDock, false);
 		obs_data_release(settings);
 	} else if (hotkeyDisplayDock) {
 		hotkeyDisplayDock->setSceneName(StyleConstants::DEFAULT_SCENE_NAME);
@@ -1211,6 +1238,9 @@ bool obs_module_load()
 	// Register OBS hotkey for toggle
 	toggleHotkeyId = obs_hotkey_register_frontend("streamup_hotkey_display_toggle",
 		obs_module_text("Hotkey.Toggle"), toggleHotkeyCallback, nullptr);
+
+	// Register frontend event callback for deferred hook init and clean shutdown
+	obs_frontend_add_event_callback(frontendEventCallback, nullptr);
 
 	return true;
 }
@@ -1268,6 +1298,10 @@ void obs_module_post_load()
 
 void obs_module_unload()
 {
+	obs_frontend_remove_event_callback(frontendEventCallback, nullptr);
+
+	// Safety net: hooks should already be removed by OBS_FRONTEND_EVENT_EXIT,
+	// but clean up if something went wrong
 #ifdef _WIN32
 	if (keyboardHook) {
 		UnhookWindowsHookEx(keyboardHook);
