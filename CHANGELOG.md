@@ -2,6 +2,21 @@
 
 ---
 
+## v1.2.0 (12 Apr '26)
+**Patch Focus:** StreamUP UI design system & settings redesign
+- Migrated settings dialog to the StreamUP frameless design system with Catppuccin Mocha theming
+- Replaced all QCheckBox controls with SwitchWidget toggles for visual consistency across StreamUP plugins
+- Replaced standard buttons with styled buttons throughout settings
+- Settings dialog now uses a two-column layout with new Display Settings group box
+- Upgraded whitelist field from single-line QLineEdit to multi-line QPlainTextEdit for easier editing
+- Fixed low-level keyboard hook installing before the Qt event loop was running, which could cause missed events on startup
+- Dock label now has a max height cap to prevent it stretching the entire dock
+- History list now expands to fill available space instead of being capped at 120px
+- Added hover highlight to history list items
+- Replaced toolbar separator with spacer to anchor settings button to the right
+- Switched settings dialog from blocking exec() to non-blocking show/raise/activateWindow with WA_DeleteOnClose
+- Added full keyboard tab order through all settings controls
+
 ## v1.1.0 (21 Mar '26)
 **Patch Focus:** New features, bug fixes & performance
 
