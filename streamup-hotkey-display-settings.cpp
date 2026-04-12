@@ -5,8 +5,6 @@
 StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *dock, QWidget *parent)
 	: QDialog(parent),
 	  hotkeyDisplayDock(dock),
-	  mainLayout(new QVBoxLayout(this)),
-	  buttonLayout(new QHBoxLayout()),
 	  sceneLayout(new QHBoxLayout()),
 	  sourceLayout(new QHBoxLayout()),
 	  prefixLayout(new QHBoxLayout()),
@@ -21,28 +19,66 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	  sceneComboBox(new QComboBox(this)),
 	  sourceComboBox(new QComboBox(this)),
 	  timeSpinBox(new QSpinBox(this)),
-	  applyButton(new QPushButton(obs_module_text("Settings.Button.Apply"), this)),
-	  closeButton(new QPushButton(obs_module_text("Settings.Button.Close"), this)),
-	  displayInTextSourceCheckBox(new QCheckBox(obs_module_text("Settings.Checkbox.DisplayInTextSource"), this)),
+	  displayInTextSourceCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.DisplayInTextSource"), this)),
 	  textSourceGroupBox(new QGroupBox(obs_module_text("Settings.Group.TextSource"), this)),
 	  singleKeyGroupBox(new QGroupBox(obs_module_text("Settings.Group.SingleKeyCapture"), this)),
-	  captureNumpadCheckBox(new QCheckBox(obs_module_text("Settings.Checkbox.CaptureNumpad"), this)),
-	  captureNumbersCheckBox(new QCheckBox(obs_module_text("Settings.Checkbox.CaptureNumbers"), this)),
-	  captureLettersCheckBox(new QCheckBox(obs_module_text("Settings.Checkbox.CaptureLetters"), this)),
-	  capturePunctuationCheckBox(new QCheckBox(obs_module_text("Settings.Checkbox.CapturePunctuation"), this)),
+	  captureNumpadCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CaptureNumpad"), this)),
+	  captureNumbersCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CaptureNumbers"), this)),
+	  captureLettersCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CaptureLetters"), this)),
+	  capturePunctuationCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CapturePunctuation"), this)),
 	  whitelistLabel(new QLabel(obs_module_text("Settings.Label.Whitelist"), this)),
-	  whitelistLineEdit(new QLineEdit(this)),
 	  separatorLabel(new QLabel(obs_module_text("Settings.Label.Separator"), this)),
 	  separatorLineEdit(new QLineEdit(this)),
 	  maxHistoryLabel(new QLabel(obs_module_text("Settings.Label.MaxHistory"), this)),
 	  maxHistorySpinBox(new QSpinBox(this)),
-	  enableLoggingCheckBox(new QCheckBox(obs_module_text("Settings.Checkbox.EnableLogging"), this))
+	  enableLoggingCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.EnableLogging"), this))
 {
-	setWindowTitle(obs_module_text("Settings.Title"));
+	// Apply StreamUP dialog chrome (frameless window with custom title bar)
+	DialogChrome chrome = ApplyDialogChrome(this, obs_module_text("Settings.Title"));
+	mainLayout = chrome.contentLayout;
+	buttonLayout = new QHBoxLayout();
+
+	// Create styled buttons
+	applyButton = CreateStyledButton(obs_module_text("Settings.Button.Apply"), "primary");
+	closeButton = CreateStyledButton(obs_module_text("Settings.Button.Close"), "default");
+
 	setAccessibleName(obs_module_text("Settings.Title"));
 	setAccessibleDescription(obs_module_text("Settings.Description"));
 
-	setMinimumSize(300, 130);
+	setMinimumWidth(550);
+
+	// Create QPlainTextEdit for whitelist (replaces QLineEdit)
+	whitelistTextEdit = new QPlainTextEdit(this);
+	whitelistTextEdit->setMinimumHeight(80);
+
+	// Create Display Settings group box
+	displayGroupBox = new QGroupBox(obs_module_text("Settings.Group.Display"), this);
+
+	// Apply Catppuccin Mocha styles
+	textSourceGroupBox->setStyleSheet(GetGroupBoxStyle());
+	singleKeyGroupBox->setStyleSheet(GetGroupBoxStyle());
+	displayGroupBox->setStyleSheet(GetGroupBoxStyle());
+
+	sceneComboBox->setStyleSheet(GetComboBoxStyle());
+	sourceComboBox->setStyleSheet(GetComboBoxStyle());
+
+	timeSpinBox->setStyleSheet(GetSpinBoxStyle());
+	maxHistorySpinBox->setStyleSheet(GetSpinBoxStyle());
+
+	prefixLineEdit->setStyleSheet(GetInputStyle());
+	suffixLineEdit->setStyleSheet(GetInputStyle());
+	separatorLineEdit->setStyleSheet(GetInputStyle());
+
+	whitelistTextEdit->setStyleSheet(GetPlainTextEditStyle());
+
+	sceneLabel->setStyleSheet(GetLabelStyle());
+	sourceLabel->setStyleSheet(GetLabelStyle());
+	timeLabel->setStyleSheet(GetLabelStyle());
+	prefixLabel->setStyleSheet(GetLabelStyle());
+	suffixLabel->setStyleSheet(GetLabelStyle());
+	whitelistLabel->setStyleSheet(GetLabelStyle());
+	separatorLabel->setStyleSheet(GetLabelStyle());
+	maxHistoryLabel->setStyleSheet(GetLabelStyle());
 
 	// Configure tooltips and accessibility
 	sceneComboBox->setToolTip(obs_module_text("Settings.Tooltip.Scene"));
@@ -82,6 +118,7 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	displayInTextSourceCheckBox->setAccessibleDescription(obs_module_text("Settings.Tooltip.DisplayInTextSource"));
 
 	textSourceGroupBox->setAccessibleName(obs_module_text("Settings.Group.TextSource"));
+	displayGroupBox->setAccessibleName(obs_module_text("Settings.Group.Display"));
 
 	// Set accessible properties for labels
 	sceneLabel->setAccessibleName(obs_module_text("Settings.Label.Scene"));
@@ -122,9 +159,6 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	timeLayout->addWidget(timeLabel);
 	timeLayout->addWidget(timeSpinBox);
 
-	buttonLayout->addWidget(applyButton);
-	buttonLayout->addWidget(closeButton);
-
 	// Create and configure singleKeyGroupBox layout
 	QVBoxLayout *singleKeyLayout = new QVBoxLayout();
 	singleKeyLayout->addWidget(captureNumpadCheckBox);
@@ -132,7 +166,7 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	singleKeyLayout->addWidget(captureLettersCheckBox);
 	singleKeyLayout->addWidget(capturePunctuationCheckBox);
 	singleKeyLayout->addWidget(whitelistLabel);
-	singleKeyLayout->addWidget(whitelistLineEdit);
+	singleKeyLayout->addWidget(whitelistTextEdit);
 	singleKeyGroupBox->setLayout(singleKeyLayout);
 
 	// Set tooltips for single key capture options
@@ -140,8 +174,8 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	captureNumbersCheckBox->setToolTip(obs_module_text("Settings.Tooltip.CaptureNumbers"));
 	captureLettersCheckBox->setToolTip(obs_module_text("Settings.Tooltip.CaptureLetters"));
 	capturePunctuationCheckBox->setToolTip(obs_module_text("Settings.Tooltip.CapturePunctuation"));
-	whitelistLineEdit->setToolTip(obs_module_text("Settings.Tooltip.Whitelist"));
-	whitelistLineEdit->setPlaceholderText(obs_module_text("Settings.Placeholder.Whitelist"));
+	whitelistTextEdit->setToolTip(obs_module_text("Settings.Tooltip.Whitelist"));
+	whitelistTextEdit->setPlaceholderText(obs_module_text("Settings.Placeholder.Whitelist"));
 
 	// Set tooltip for logging checkbox
 	enableLoggingCheckBox->setToolTip(obs_module_text("Settings.Tooltip.EnableLogging"));
@@ -164,31 +198,64 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	maxHistoryLayout->addWidget(maxHistoryLabel);
 	maxHistoryLayout->addWidget(maxHistorySpinBox);
 
-	mainLayout->addWidget(displayInTextSourceCheckBox);
-	mainLayout->addWidget(textSourceGroupBox);
-	mainLayout->addWidget(singleKeyGroupBox);
-	mainLayout->addLayout(separatorLayout);
-	mainLayout->addLayout(maxHistoryLayout);
-	mainLayout->addWidget(enableLoggingCheckBox);
-	mainLayout->addLayout(timeLayout);
-	mainLayout->addLayout(buttonLayout);
-	setLayout(mainLayout);
+	// Create and configure displayGroupBox layout
+	QVBoxLayout *displayLayout = new QVBoxLayout();
+	displayLayout->addLayout(separatorLayout);
+	displayLayout->addLayout(maxHistoryLayout);
+	displayLayout->addLayout(timeLayout);
+	displayLayout->addWidget(enableLoggingCheckBox);
+	displayGroupBox->setLayout(displayLayout);
+
+	// Two-column layout
+	QHBoxLayout *columnsLayout = new QHBoxLayout();
+	columnsLayout->setSpacing(20);
+
+	QVBoxLayout *leftCol = new QVBoxLayout();
+	leftCol->setSpacing(14);
+	QVBoxLayout *rightCol = new QVBoxLayout();
+	rightCol->setSpacing(14);
+
+	leftCol->addWidget(singleKeyGroupBox);
+	leftCol->addStretch();
+
+	rightCol->addWidget(displayGroupBox);
+	rightCol->addSpacing(8);
+	rightCol->addWidget(displayInTextSourceCheckBox);
+	rightCol->addWidget(textSourceGroupBox);
+	rightCol->addStretch();
+
+	columnsLayout->addLayout(leftCol, 1);
+	columnsLayout->addLayout(rightCol, 1);
+	mainLayout->addLayout(columnsLayout);
+
+	// Add buttons to footer layout
+	buttonLayout->addWidget(applyButton);
+	buttonLayout->addWidget(closeButton);
+	chrome.footerLayout->addLayout(buttonLayout);
 
 	// Set up proper tab order for keyboard navigation
+	setTabOrder(captureNumpadCheckBox, captureNumbersCheckBox);
+	setTabOrder(captureNumbersCheckBox, captureLettersCheckBox);
+	setTabOrder(captureLettersCheckBox, capturePunctuationCheckBox);
+	setTabOrder(capturePunctuationCheckBox, whitelistTextEdit);
+	setTabOrder(whitelistTextEdit, separatorLineEdit);
+	setTabOrder(separatorLineEdit, maxHistorySpinBox);
+	setTabOrder(maxHistorySpinBox, timeSpinBox);
+	setTabOrder(timeSpinBox, enableLoggingCheckBox);
+	setTabOrder(enableLoggingCheckBox, displayInTextSourceCheckBox);
 	setTabOrder(displayInTextSourceCheckBox, sceneComboBox);
 	setTabOrder(sceneComboBox, sourceComboBox);
 	setTabOrder(sourceComboBox, prefixLineEdit);
 	setTabOrder(prefixLineEdit, suffixLineEdit);
-	setTabOrder(suffixLineEdit, timeSpinBox);
-	setTabOrder(timeSpinBox, applyButton);
+	setTabOrder(suffixLineEdit, applyButton);
 	setTabOrder(applyButton, closeButton);
 
 	// Connect signals to slots
 	connect(applyButton, &QPushButton::clicked, this, &StreamupHotkeyDisplaySettings::applySettings);
 	connect(closeButton, &QPushButton::clicked, this, &StreamupHotkeyDisplaySettings::close);
 	connect(sceneComboBox, &QComboBox::currentTextChanged, this, &StreamupHotkeyDisplaySettings::onSceneChanged);
-	connect(displayInTextSourceCheckBox, &QCheckBox::toggled, this,
-		&StreamupHotkeyDisplaySettings::onDisplayInTextSourceToggled); // Connect checkbox toggle
+	connect(displayInTextSourceCheckBox->switchBtn, &SwitchButton::toggled, this,
+		&StreamupHotkeyDisplaySettings::onDisplayInTextSourceToggled);
 
 	// Load current settings
 	obs_data_t *settings = SaveLoadSettingsCallback(nullptr, false);
@@ -227,7 +294,7 @@ void StreamupHotkeyDisplaySettings::LoadSettings(obs_data_t *settings)
 	capturePunctuation = obs_data_get_bool(settings, "capturePunctuation");
 	capturePunctuationCheckBox->setChecked(capturePunctuation);
 	whitelistedKeys = QString::fromUtf8(obs_data_get_string(settings, "whitelistedKeys"));
-	whitelistLineEdit->setText(whitelistedKeys);
+	whitelistTextEdit->setPlainText(whitelistedKeys);
 
 	// Logging settings
 	enableLogging = obs_data_get_bool(settings, "enableLogging");
@@ -261,7 +328,7 @@ void StreamupHotkeyDisplaySettings::SaveSettings()
 	obs_data_set_bool(settings, "captureNumbers", captureNumbersCheckBox->isChecked());
 	obs_data_set_bool(settings, "captureLetters", captureLettersCheckBox->isChecked());
 	obs_data_set_bool(settings, "capturePunctuation", capturePunctuationCheckBox->isChecked());
-	obs_data_set_string(settings, "whitelistedKeys", whitelistLineEdit->text().toUtf8().constData());
+	obs_data_set_string(settings, "whitelistedKeys", whitelistTextEdit->toPlainText().toUtf8().constData());
 
 	// Logging settings
 	obs_data_set_bool(settings, "enableLogging", enableLoggingCheckBox->isChecked());
@@ -293,7 +360,7 @@ void StreamupHotkeyDisplaySettings::applySettings()
 	captureNumbers = captureNumbersCheckBox->isChecked();
 	captureLetters = captureLettersCheckBox->isChecked();
 	capturePunctuation = capturePunctuationCheckBox->isChecked();
-	whitelistedKeys = whitelistLineEdit->text();
+	whitelistedKeys = whitelistTextEdit->toPlainText();
 
 	// Logging settings
 	enableLogging = enableLoggingCheckBox->isChecked();

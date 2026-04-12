@@ -71,22 +71,23 @@ HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 	label->setAlignment(Qt::AlignCenter);
 	label->setFrameShape(QFrame::NoFrame);
 	label->setFrameShadow(QFrame::Plain);
-	label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-	label->setMinimumHeight(50);
+	label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+	label->setMinimumHeight(40);
+	label->setMaximumHeight(80);
 	label->setWordWrap(true);
 	label->setProperty("hotkeyState", "inactive");
 
 	// Use theme-aware styling
 	label->setStyleSheet(
 		"QLabel[hotkeyState=\"active\"] {"
-		"  border: 2px solid palette(highlight);"
+		"  border: 1px solid palette(highlight);"
 		"  border-radius: 4px;"
 		"  padding: 10px;"
 		"  font-size: 14pt;"
 		"  background: palette(base);"
 		"}"
 		"QLabel[hotkeyState=\"inactive\"] {"
-		"  border: 2px solid palette(mid);"
+		"  border: 1px solid palette(mid);"
 		"  border-radius: 4px;"
 		"  padding: 10px;"
 		"  font-size: 14pt;"
@@ -97,28 +98,30 @@ HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 	// Add label to the horizontal layout
 	labelLayout->addWidget(label);
 
-	// Add the label layout to main layout with stretch factor 1 (expands to fill space)
-	layout->addLayout(labelLayout, 1);
+	// Add the label layout to main layout with stretch factor 0 (doesn't expand)
+	layout->addLayout(labelLayout, 0);
 
 	// Add spacing between label and history (4px)
 	layout->addSpacing(4);
 
 	// Configure history list
 	historyList->setObjectName("hotkeyDisplayHistory");
-	historyList->setMaximumHeight(120);
+	historyList->setMaximumHeight(16777215);
+	historyList->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 	historyList->setFrameShape(QFrame::NoFrame);
 	historyList->setSelectionMode(QAbstractItemView::NoSelection);
 	historyList->setFocusPolicy(Qt::NoFocus);
 	historyList->setStyleSheet(
 		"QListWidget { background: palette(base); border: 1px solid palette(mid); border-radius: 4px; font-size: 10pt; }"
-		"QListWidget::item { padding: 2px 8px; }");
+		"QListWidget::item { padding: 4px 8px; }"
+		"QListWidget::item:hover { background: palette(midlight); }");
 	historyList->setVisible(false);
 
 	// Add history in a horizontal layout with margins
 	QHBoxLayout *historyLayout = new QHBoxLayout();
 	historyLayout->setContentsMargins(8, 0, 8, 0);
 	historyLayout->addWidget(historyList);
-	layout->addLayout(historyLayout);
+	layout->addLayout(historyLayout, 1);
 
 	// Add spacing between history and toolbar (4px)
 	layout->addSpacing(4);
@@ -146,9 +149,11 @@ HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 	label->setAccessibleName(obs_module_text("Dock.Description"));
 	label->setAccessibleDescription(obs_module_text("Dock.Label.Idle"));
 
-	// Add actions to toolbar
+	// Add actions to toolbar with spacer to anchor settings button right
 	toolbar->addAction(toggleAction);
-	toolbar->addSeparator();
+	QWidget *toolbarSpacer = new QWidget();
+	toolbarSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	toolbar->addWidget(toolbarSpacer);
 	toolbar->addAction(settingsAction);
 
 	// Copy dynamic properties from actions to widgets (OBS pattern)
@@ -296,17 +301,16 @@ void HotkeyDisplayDock::toggleKeyboardHook()
 
 void HotkeyDisplayDock::openSettings()
 {
-	StreamupHotkeyDisplaySettings *settingsDialog = new StreamupHotkeyDisplaySettings(this, this);
+	auto *settingsDialog = new StreamupHotkeyDisplaySettings(this, this);
+	settingsDialog->setAttribute(Qt::WA_DeleteOnClose);
 
-	// Load current settings
 	obs_data_t *settings = SaveLoadSettingsCallback(nullptr, false);
 	if (settings) {
 		settingsDialog->LoadSettings(settings);
 		obs_data_release(settings);
 	}
 
-	if (settingsDialog->exec() == QDialog::Accepted) {
-		// Update the dock's settings after applying new settings
+	connect(settingsDialog, &QDialog::accepted, this, [this]() {
 		obs_data_t *settings = SaveLoadSettingsCallback(nullptr, false);
 		if (settings) {
 			sceneName = QString::fromUtf8(obs_data_get_string(settings, "sceneName"));
@@ -316,9 +320,11 @@ void HotkeyDisplayDock::openSettings()
 			suffix = QString::fromUtf8(obs_data_get_string(settings, "suffix"));
 			obs_data_release(settings);
 		}
-	}
+	});
 
-	delete settingsDialog;
+	settingsDialog->show();
+	settingsDialog->raise();
+	settingsDialog->activateWindow();
 }
 
 void HotkeyDisplayDock::clearDisplay()

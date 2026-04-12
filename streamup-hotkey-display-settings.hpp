@@ -8,10 +8,11 @@
 #include <QSpinBox>
 #include <QLabel>
 #include <QLineEdit>
-#include <QCheckBox>
+#include <QPlainTextEdit>
 #include <QGroupBox>
 #include <obs-frontend-api.h>
 #include "streamup-hotkey-display-dock.hpp"
+#include "streamup-ui.hpp"
 
 class StreamupHotkeyDisplaySettings : public QDialog {
 	Q_OBJECT
@@ -59,17 +60,20 @@ private:
 	QSpinBox *timeSpinBox;
 	QPushButton *applyButton;
 	QPushButton *closeButton;
-	QCheckBox *displayInTextSourceCheckBox;
+	SwitchWidget *displayInTextSourceCheckBox;
 	QGroupBox *textSourceGroupBox;
 
 	// Single key capture UI elements
 	QGroupBox *singleKeyGroupBox;
-	QCheckBox *captureNumpadCheckBox;
-	QCheckBox *captureNumbersCheckBox;
-	QCheckBox *captureLettersCheckBox;
-	QCheckBox *capturePunctuationCheckBox;
+	SwitchWidget *captureNumpadCheckBox;
+	SwitchWidget *captureNumbersCheckBox;
+	SwitchWidget *captureLettersCheckBox;
+	SwitchWidget *capturePunctuationCheckBox;
 	QLabel *whitelistLabel;
-	QLineEdit *whitelistLineEdit;
+	QPlainTextEdit *whitelistTextEdit;
+
+	// Display settings group
+	QGroupBox *displayGroupBox;
 
 	// Display format UI elements
 	QLabel *separatorLabel;
@@ -78,7 +82,7 @@ private:
 	QSpinBox *maxHistorySpinBox;
 
 	// Logging UI elements
-	QCheckBox *enableLoggingCheckBox;
+	SwitchWidget *enableLoggingCheckBox;
 
 private slots:
 	void applySettings();
