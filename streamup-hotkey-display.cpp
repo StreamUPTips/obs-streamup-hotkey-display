@@ -16,6 +16,7 @@
 #include <QMainWindow>
 #include <QDockWidget>
 #include <QMetaObject>
+#include <QTimer>
 #include <util/platform.h>
 #include "obs-websocket-api.h"
 
@@ -1186,6 +1187,19 @@ static void frontendEventCallback(enum obs_frontend_event event, void *data)
 	(void)data;
 
 	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
+		// Fix: restoreState() can corrupt the maximized geometry when it
+		// re-docks a visible plugin dock. Force a re-maximize on the next
+		// event-loop tick so the window settles at the correct size.
+		QMainWindow *main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
+		if (main && main->isMaximized()) {
+			QTimer::singleShot(0, main, [main]() {
+				if (main->isMaximized()) {
+					main->showNormal();
+					main->showMaximized();
+				}
+			});
+		}
+
 		// Event loop is now running — safe to install low-level hooks
 		if (deferredHookEnable && hotkeyDisplayDock) {
 			if (hotkeyDisplayDock->enableHooks()) {
