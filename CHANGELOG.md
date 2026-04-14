@@ -2,6 +2,12 @@
 
 ---
 
+## v1.2.1 (14 Apr '26)
+**Patch Focus:** Window geometry fix
+- Fixed maximized window geometry being corrupted by dock state restoration
+
+---
+
 ## v1.2.0 (12 Apr '26)
 **Patch Focus:** Standalone mouse capture, StreamUP UI design system & settings redesign
 - Added standalone mouse action capture toggle. Mouse clicks, scrolls, and extra buttons can now be displayed without holding a modifier key. Opt-in via "Standalone Mouse Actions" in Single Key Capture settings
