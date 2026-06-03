@@ -14,7 +14,7 @@
 #include "streamup-hotkey-display-dock.hpp"
 #include "streamup-ui.hpp"
 
-class StreamupHotkeyDisplaySettings : public QDialog {
+class StreamupHotkeyDisplaySettings : public ShadowDialog {
 	Q_OBJECT
 
 public:

@@ -157,11 +157,40 @@ public:
 		QPainterPath path;
 		path.addRoundedRect(QRectF(rect()), m_radius, m_radius);
 		painter.fillPath(path, QColor(C_BG));
-		QPainterPath borderPath;
-		borderPath.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), m_radius, m_radius);
-		painter.setPen(QPen(QColor(255, 255, 255, 15), 1));
-		painter.drawPath(borderPath);
+		// Fill only — no border stroke. The elevation shadow is the edge; a
+		// painted hairline would wrap the header/footer corners like a frame.
 		QFrame::paintEvent(event);
+	}
+};
+
+// --------------- ShadowDialog ---------------
+// Host for the elevation shadow: concentric rounded-rect rings painted into a
+// transparent margin around the card (no QGraphicsDropShadowEffect — it fights
+// setMask and re-rasterises on repaints). ApplyDialogChrome reserves
+// kShadowMargin in the outer layout when the dialog is a ShadowDialog.
+
+class ShadowDialog : public QDialog {
+public:
+	static constexpr int kShadowMargin = 20; // transparent canvas for the shadow
+	using QDialog::QDialog;
+
+protected:
+	void paintEvent(QPaintEvent *) override
+	{
+		QPainter p(this);
+		p.setRenderHint(QPainter::Antialiasing);
+		p.setPen(Qt::NoPen);
+		const QRectF card = QRectF(rect()).adjusted(
+			kShadowMargin, kShadowMargin, -kShadowMargin, -kShadowMargin);
+		for (int i = kShadowMargin; i >= 1; --i) {
+			const qreal t = (qreal)i / kShadowMargin;
+			const int alpha = (int)(10.0 * (1.0 - t) * (1.0 - t) + 0.5);
+			if (alpha <= 0)
+				continue;
+			QPainterPath ring;
+			ring.addRoundedRect(card.adjusted(-i, -i + 2, i, i + 2), 14 + i, 14 + i);
+			p.fillPath(ring, QColor(0, 0, 0, alpha));
+		}
 	}
 };
 
@@ -212,8 +241,12 @@ inline DialogChrome ApplyDialogChrome(QDialog *dialog, const QString &title)
 	dialog->setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
 	dialog->setAttribute(Qt::WA_TranslucentBackground);
 
+	// ShadowDialogs reserve a transparent margin that the elevation shadow
+	// paints into; a plain QDialog keeps the old 1px margin so nothing renders
+	// a dead transparent band.
+	const int margin = dynamic_cast<ShadowDialog *>(dialog) ? ShadowDialog::kShadowMargin : 1;
 	QVBoxLayout *outerLay = new QVBoxLayout(dialog);
-	outerLay->setContentsMargins(1, 1, 1, 1);
+	outerLay->setContentsMargins(margin, margin, margin, margin);
 	outerLay->setSpacing(0);
 
 	RoundedContainer *container = new RoundedContainer(14);
@@ -221,9 +254,12 @@ inline DialogChrome ApplyDialogChrome(QDialog *dialog, const QString &title)
 	mainLay->setContentsMargins(0, 0, 0, 0);
 	mainLay->setSpacing(0);
 
+	// Divider scoped by object name so the border doesn't propagate to the
+	// title label / close button.
 	QWidget *header = new QWidget();
+	header->setObjectName("dlgHeader");
 	header->setFixedHeight(44);
-	header->setStyleSheet(QString("background: transparent; border-bottom: 1px solid %1;").arg(C_BORDER));
+	header->setStyleSheet(QString("QWidget#dlgHeader { background: transparent; border-bottom: 1px solid %1; }").arg(C_BORDER));
 	QHBoxLayout *headerLay = new QHBoxLayout(header);
 	headerLay->setContentsMargins(18, 0, 10, 0);
 
@@ -257,7 +293,8 @@ inline DialogChrome ApplyDialogChrome(QDialog *dialog, const QString &title)
 	mainLay->addWidget(content, 1);
 
 	QWidget *footer = new QWidget();
-	footer->setStyleSheet(QString("background: %1; border-top: 1px solid %2;").arg(C_BG, C_BORDER));
+	footer->setObjectName("dlgFooter");
+	footer->setStyleSheet(QString("QWidget#dlgFooter { background: %1; border-top: 1px solid %2; }").arg(C_BG, C_BORDER));
 	QVBoxLayout *footerLayout = new QVBoxLayout(footer);
 	footerLayout->setContentsMargins(20, 12, 20, 12);
 	footerLayout->setSpacing(8);

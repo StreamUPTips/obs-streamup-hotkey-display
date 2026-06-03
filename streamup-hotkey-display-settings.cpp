@@ -3,7 +3,7 @@
 #include <obs-module.h>
 
 StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *dock, QWidget *parent)
-	: QDialog(parent),
+	: ShadowDialog(parent),
 	  hotkeyDisplayDock(dock),
 	  sceneLayout(new QHBoxLayout()),
 	  sourceLayout(new QHBoxLayout()),
@@ -46,7 +46,7 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	setAccessibleName(obs_module_text("Settings.Title"));
 	setAccessibleDescription(obs_module_text("Settings.Description"));
 
-	setMinimumWidth(550);
+	setMinimumWidth(550 + 2 * ShadowDialog::kShadowMargin);
 
 	// Create QPlainTextEdit for whitelist (replaces QLineEdit)
 	whitelistTextEdit = new QPlainTextEdit(this);
