@@ -1,9 +1,11 @@
 #pragma once
 
 #include <QAbstractButton>
+#include <QApplication>
 #include <QDialog>
 #include <QEvent>
 #include <QFont>
+#include <QFontInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -12,11 +14,67 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWindow>
+#include <algorithm>
 #include <cmath>
+
+// ── UI scale ──
+// Qt already maps logical pixels through the per-monitor display scale
+// (OBS runs with HighDpiScaleFactorRoundingPolicy::PassThrough), so widget
+// geometry tracks the monitor's scale automatically. What it does NOT track
+// is the OS text-size preference (Windows "Make text bigger", macOS larger
+// system font): that only shows up in the default application font. OBS's
+// own UI follows that font; our hardcoded px sizes don't. ui_scale() derives
+// a factor from the default font so our dialogs grow with it too.
+inline qreal ui_scale()
+{
+	static const qreal s = []() {
+		// Baseline: Windows Segoe UI 9pt = 12 logical px at 100% text size.
+#ifdef __APPLE__
+		const qreal baseline = 13.0; // macOS system font 13pt
+#else
+		const qreal baseline = 12.0;
+#endif
+		const int px = QFontInfo(QApplication::font()).pixelSize();
+		if (px <= 0)
+			return 1.0;
+		return std::clamp(px / baseline, 1.0, 3.0);
+	}();
+	return s;
+}
+
+// Scale a logical-pixel design size by the text-size factor.
+inline int S(int px)
+{
+	return (int)std::lround(px * ui_scale());
+}
+
+// Scale every "<N>px" value inside a stylesheet by the text-size factor.
+// Lets existing stylesheets stay readable (literal design px) while still
+// honouring the OS text-size preference. No-op at 100%.
+inline QString scale_qss(const QString &qss)
+{
+	if (ui_scale() <= 1.0)
+		return qss;
+	static const QRegularExpression rx(QStringLiteral("(-?\\d+)px"));
+	QString out;
+	out.reserve(qss.size() + 16);
+	qsizetype last = 0;
+	auto it = rx.globalMatch(qss);
+	while (it.hasNext()) {
+		const QRegularExpressionMatch m = it.next();
+		out += qss.mid(last, m.capturedStart() - last);
+		out += QString::number(S(m.captured(1).toInt()));
+		out += QStringLiteral("px");
+		last = m.capturedEnd();
+	}
+	out += qss.mid(last);
+	return out;
+}
 
 #define C_BG "#1e1e2e"
 #define C_CARD "#272738"
@@ -44,7 +102,7 @@ public:
 	SwitchButton(QWidget *parent = nullptr) : QAbstractButton(parent)
 	{
 		setCheckable(true);
-		setFixedSize(54, 22);
+		setFixedSize(S(54), S(22));
 		setCursor(Qt::PointingHandCursor);
 
 		m_anim = new QTimer(this);
@@ -67,7 +125,7 @@ public:
 		});
 	}
 
-	QSize sizeHint() const override { return QSize(54, 22); }
+	QSize sizeHint() const override { return QSize(S(54), S(22)); }
 
 protected:
 	void paintEvent(QPaintEvent *) override
@@ -91,9 +149,9 @@ protected:
 		p.setBrush(track);
 		p.drawRoundedRect(QRectF(0, 0, width(), height()), trackR, trackR);
 
-		int margin = 2;
+		int margin = S(2);
 		int knobH = height() - margin * 2;
-		int knobW = 32;
+		int knobW = S(32);
 		float maxTravel = width() - knobW - margin * 2;
 		float x = margin + t * maxTravel;
 
@@ -114,11 +172,11 @@ public:
 	SwitchWidget(const QString &text, QWidget *parent = nullptr) : QWidget(parent)
 	{
 		QHBoxLayout *lay = new QHBoxLayout(this);
-		lay->setContentsMargins(0, 2, 0, 2);
-		lay->setSpacing(10);
+		lay->setContentsMargins(0, S(2), 0, S(2));
+		lay->setSpacing(S(10));
 		switchBtn = new SwitchButton(this);
 		QLabel *lbl = new QLabel(text, this);
-		lbl->setStyleSheet(QString("color: %1; font-size: 13px; font-weight: 500;").arg(C_TEXT));
+		lbl->setStyleSheet(scale_qss(QString("color: %1; font-size: 13px; font-weight: 500;").arg(C_TEXT)));
 		lay->addWidget(switchBtn);
 		lay->addWidget(lbl);
 		lay->addStretch();
@@ -249,7 +307,7 @@ inline DialogChrome ApplyDialogChrome(QDialog *dialog, const QString &title)
 	outerLay->setContentsMargins(margin, margin, margin, margin);
 	outerLay->setSpacing(0);
 
-	RoundedContainer *container = new RoundedContainer(14);
+	RoundedContainer *container = new RoundedContainer(S(14));
 	QVBoxLayout *mainLay = new QVBoxLayout(container);
 	mainLay->setContentsMargins(0, 0, 0, 0);
 	mainLay->setSpacing(0);
@@ -258,27 +316,27 @@ inline DialogChrome ApplyDialogChrome(QDialog *dialog, const QString &title)
 	// title label / close button.
 	QWidget *header = new QWidget();
 	header->setObjectName("dlgHeader");
-	header->setFixedHeight(44);
-	header->setStyleSheet(QString("QWidget#dlgHeader { background: transparent; border-bottom: 1px solid %1; }").arg(C_BORDER));
+	header->setFixedHeight(S(44));
+	header->setStyleSheet(scale_qss(QString("QWidget#dlgHeader { background: transparent; border-bottom: 1px solid %1; }").arg(C_BORDER)));
 	QHBoxLayout *headerLay = new QHBoxLayout(header);
-	headerLay->setContentsMargins(18, 0, 10, 0);
+	headerLay->setContentsMargins(S(18), 0, S(10), 0);
 
 	QLabel *titleLabel = new QLabel(title);
-	titleLabel->setStyleSheet(
+	titleLabel->setStyleSheet(scale_qss(
 		QString("color: %1; font-size: 14px; font-weight: bold; "
 			"font-family: Roboto, 'Open Sans', '.AppleSystemUIFont', Helvetica, Arial, sans-serif;")
-			.arg(C_TEXT));
+			.arg(C_TEXT)));
 	headerLay->addWidget(titleLabel);
 	headerLay->addStretch();
 
 	QToolButton *closeBtn = new QToolButton();
 	closeBtn->setText(QString::fromUtf8("\xC3\x97"));
-	closeBtn->setFixedSize(28, 28);
+	closeBtn->setFixedSize(S(28), S(28));
 	closeBtn->setCursor(Qt::PointingHandCursor);
 	closeBtn->setFont(QFont("Arial", 14));
 	closeBtn->setAutoRaise(true);
-	closeBtn->setStyleSheet("QToolButton { color: " C_TEXT "; background: rgba(255,255,255,0.06); border-radius: 6px; }"
-				"QToolButton:hover { color: " C_DANGER "; background: rgba(255,69,58,0.3); }");
+	closeBtn->setStyleSheet(scale_qss(QString("QToolButton { color: " C_TEXT "; background: rgba(255,255,255,0.06); border-radius: 6px; }"
+				"QToolButton:hover { color: " C_DANGER "; background: rgba(255,69,58,0.3); }")));
 	headerLay->addWidget(closeBtn);
 	QObject::connect(closeBtn, &QToolButton::clicked, dialog, &QDialog::reject);
 
@@ -288,16 +346,16 @@ inline DialogChrome ApplyDialogChrome(QDialog *dialog, const QString &title)
 	QWidget *content = new QWidget();
 	content->setStyleSheet(QString("background: %1;").arg(C_BG));
 	QVBoxLayout *contentLayout = new QVBoxLayout(content);
-	contentLayout->setContentsMargins(20, 16, 20, 16);
-	contentLayout->setSpacing(14);
+	contentLayout->setContentsMargins(S(20), S(16), S(20), S(16));
+	contentLayout->setSpacing(S(14));
 	mainLay->addWidget(content, 1);
 
 	QWidget *footer = new QWidget();
 	footer->setObjectName("dlgFooter");
-	footer->setStyleSheet(QString("QWidget#dlgFooter { background: %1; border-top: 1px solid %2; }").arg(C_BG, C_BORDER));
+	footer->setStyleSheet(scale_qss(QString("QWidget#dlgFooter { background: %1; border-top: 1px solid %2; }").arg(C_BG, C_BORDER)));
 	QVBoxLayout *footerLayout = new QVBoxLayout(footer);
-	footerLayout->setContentsMargins(20, 12, 20, 12);
-	footerLayout->setSpacing(8);
+	footerLayout->setContentsMargins(S(20), S(12), S(20), S(12));
+	footerLayout->setSpacing(S(8));
 	mainLay->addWidget(footer, 0);
 
 	outerLay->addWidget(container);
@@ -311,7 +369,7 @@ inline QPushButton *CreateStyledButton(const QString &text, const QString &type,
 {
 	QPushButton *btn = new QPushButton(text);
 	btn->setCursor(Qt::PointingHandCursor);
-	btn->setFixedHeight(height);
+	btn->setFixedHeight(S(height));
 
 	int radius = (height + 2) / 2;
 
@@ -355,7 +413,7 @@ inline QPushButton *CreateStyledButton(const QString &text, const QString &type,
 				.arg(base, C_DIM, C_TEXT2, C_BORDER);
 	}
 
-	btn->setStyleSheet(style);
+	btn->setStyleSheet(scale_qss(style));
 	return btn;
 }
 
@@ -363,7 +421,7 @@ inline QPushButton *CreateStyledButton(const QString &text, const QString &type,
 
 inline QString GetGroupBoxStyle()
 {
-	return QString("QGroupBox {"
+	return scale_qss(QString("QGroupBox {"
 		       "    padding: 0px; padding-top: 22px; margin: 0px;"
 		       "    border: none; border-radius: 0px;"
 		       "    background: transparent;"
@@ -375,40 +433,40 @@ inline QString GetGroupBoxStyle()
 		       "    subcontrol-origin: margin;"
 		       "    subcontrol-position: top left;"
 		       "}")
-		.arg(C_TEXT);
+		.arg(C_TEXT));
 }
 
 // --------------- Input Fields (matching StreamUP) ---------------
 
 inline QString GetInputStyle()
 {
-	return QString("QLineEdit { background-color: %1; border: none; border-radius: 8px; "
+	return scale_qss(QString("QLineEdit { background-color: %1; border: none; border-radius: 8px; "
 		       "padding: 2px 2px; color: %2; font-weight: 500; font-size: 13px; min-height: 20px; "
 		       "selection-background-color: rgba(0,118,223,0.3); selection-color: %2; "
 		       "font-family: Roboto, 'Open Sans', '.AppleSystemUIFont', Helvetica, Arial, sans-serif; }"
 		       "QLineEdit:focus { border: 2px solid %3; outline: none; }")
 		.arg(C_CARD)
 		.arg(C_TEXT)
-		.arg(C_PRI);
+		.arg(C_PRI));
 }
 
 inline QString GetPlainTextEditStyle()
 {
-	return QString("QPlainTextEdit { background-color: %1; border: none; border-radius: 8px; "
+	return scale_qss(QString("QPlainTextEdit { background-color: %1; border: none; border-radius: 8px; "
 		       "padding: 2px 2px; color: %2; font-weight: 500; font-size: 13px; "
 		       "selection-background-color: rgba(0,118,223,0.3); selection-color: %2; "
 		       "font-family: Roboto, 'Open Sans', '.AppleSystemUIFont', Helvetica, Arial, sans-serif; }"
 		       "QPlainTextEdit:focus { border: 2px solid %3; outline: none; }")
 		.arg(C_CARD)
 		.arg(C_TEXT)
-		.arg(C_PRI);
+		.arg(C_PRI));
 }
 
 // --------------- ComboBox (matching StreamUP) ---------------
 
 inline QString GetComboBoxStyle()
 {
-	return QString("QComboBox { background-color: %1; border: none; border-radius: 8px; "
+	return scale_qss(QString("QComboBox { background-color: %1; border: none; border-radius: 8px; "
 		       "padding: 2px 28px 2px 12px; margin: 2px; color: %2; font-weight: 500; font-size: 13px; "
 		       "min-height: 20px; max-height: 20px; "
 		       "font-family: Roboto, 'Open Sans', '.AppleSystemUIFont', Helvetica, Arial, sans-serif; }"
@@ -436,14 +494,14 @@ inline QString GetComboBoxStyle()
 		.arg(C_TEXT)
 		.arg(C_HOVER)
 		.arg(C_PRI)
-		.arg(C_BORDER_MED);
+		.arg(C_BORDER_MED));
 }
 
 // --------------- SpinBox (matching input style) ---------------
 
 inline QString GetSpinBoxStyle()
 {
-	return QString("QSpinBox, QDoubleSpinBox { background-color: %1; border: none; border-radius: 8px; "
+	return scale_qss(QString("QSpinBox, QDoubleSpinBox { background-color: %1; border: none; border-radius: 8px; "
 		       "padding: 2px 28px 2px 12px; margin: 2px; color: %2; font-weight: 500; font-size: 13px; "
 		       "min-height: 20px; max-height: 20px; "
 		       "selection-background-color: rgba(0,118,223,0.3); selection-color: %2; "
@@ -457,14 +515,14 @@ inline QString GetSpinBoxStyle()
 		.arg(C_CARD)
 		.arg(C_TEXT)
 		.arg(C_HOVER)
-		.arg(C_PRI);
+		.arg(C_PRI));
 }
 
 // --------------- List Widget ---------------
 
 inline QString GetListWidgetStyle()
 {
-	return QString("QListWidget { background: #181825; border: none; outline: none; border-radius: 8px; }"
+	return scale_qss(QString("QListWidget { background: #181825; border: none; outline: none; border-radius: 8px; }"
 		       "QListWidget::item { color: %1; padding: 5px 10px; border: none; border-radius: 0px; }"
 		       "QListWidget::item:hover { background: rgba(255,255,255,0.04); }"
 		       "QListWidget::item:selected { background: rgba(0,118,223,0.08); border-left: 2px solid %2; }"
@@ -474,28 +532,28 @@ inline QString GetListWidgetStyle()
 		       "QScrollBar::add-line, QScrollBar::sub-line { height: 0; }"
 		       "QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }")
 		.arg(C_TEXT)
-		.arg(C_PRI);
+		.arg(C_PRI));
 }
 
 // --------------- Labels ---------------
 
 inline QString GetLabelStyle()
 {
-	return QString("color: %1; font-size: 13px; font-weight: 500; "
+	return scale_qss(QString("color: %1; font-size: 13px; font-weight: 500; "
 		       "font-family: Roboto, 'Open Sans', '.AppleSystemUIFont', Helvetica, Arial, sans-serif;")
-		.arg(C_TEXT);
+		.arg(C_TEXT));
 }
 
 inline QString GetDimLabelStyle()
 {
-	return QString("color: %1; font-size: 11px; "
+	return scale_qss(QString("color: %1; font-size: 11px; "
 		       "font-family: Roboto, 'Open Sans', '.AppleSystemUIFont', Helvetica, Arial, sans-serif;")
-		.arg(C_DIM);
+		.arg(C_DIM));
 }
 
 inline QString GetFormLabelStyle()
 {
-	return QString("color: %1; font-size: 10px; font-weight: bold; text-transform: uppercase; "
+	return scale_qss(QString("color: %1; font-size: 10px; font-weight: bold; text-transform: uppercase; "
 		       "font-family: Roboto, 'Open Sans', '.AppleSystemUIFont', Helvetica, Arial, sans-serif;")
-		.arg(C_DIM);
+		.arg(C_DIM));
 }

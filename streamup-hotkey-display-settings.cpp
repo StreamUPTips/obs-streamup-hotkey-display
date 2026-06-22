@@ -46,11 +46,11 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	setAccessibleName(obs_module_text("Settings.Title"));
 	setAccessibleDescription(obs_module_text("Settings.Description"));
 
-	setMinimumWidth(550 + 2 * ShadowDialog::kShadowMargin);
+	setMinimumWidth(S(550) + 2 * ShadowDialog::kShadowMargin);
 
 	// Create QPlainTextEdit for whitelist (replaces QLineEdit)
 	whitelistTextEdit = new QPlainTextEdit(this);
-	whitelistTextEdit->setMinimumHeight(80);
+	whitelistTextEdit->setMinimumHeight(S(80));
 
 	// Create Display Settings group box
 	displayGroupBox = new QGroupBox(obs_module_text("Settings.Group.Display"), this);
@@ -186,7 +186,7 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	// Configure separator line edit
 	separatorLineEdit->setToolTip(obs_module_text("Settings.Tooltip.Separator"));
 	separatorLineEdit->setPlaceholderText(" + ");
-	separatorLineEdit->setMaximumWidth(80);
+	separatorLineEdit->setMaximumWidth(S(80));
 
 	// Configure max history spin box
 	maxHistorySpinBox->setToolTip(obs_module_text("Settings.Tooltip.MaxHistory"));
@@ -211,18 +211,18 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 
 	// Two-column layout
 	QHBoxLayout *columnsLayout = new QHBoxLayout();
-	columnsLayout->setSpacing(20);
+	columnsLayout->setSpacing(S(20));
 
 	QVBoxLayout *leftCol = new QVBoxLayout();
-	leftCol->setSpacing(14);
+	leftCol->setSpacing(S(14));
 	QVBoxLayout *rightCol = new QVBoxLayout();
-	rightCol->setSpacing(14);
+	rightCol->setSpacing(S(14));
 
 	leftCol->addWidget(singleKeyGroupBox);
 	leftCol->addStretch();
 
 	rightCol->addWidget(displayGroupBox);
-	rightCol->addSpacing(8);
+	rightCol->addSpacing(S(8));
 	rightCol->addWidget(displayInTextSourceCheckBox);
 	rightCol->addWidget(textSourceGroupBox);
 	rightCol->addStretch();
