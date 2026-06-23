@@ -7,6 +7,9 @@
 #include <QToolButton>
 #include <QThread>
 #include <obs-module.h>
+#include <streamup/ui/gallery-style.hpp> // S, scale_qss (dock keeps native theming but uses the scale helpers)
+
+using namespace StreamUP::UIStyles;
 
 // Fix #17: Platform-specific includes still needed for types used in enableHooks/disableHooks
 #ifdef _WIN32
@@ -304,11 +307,8 @@ void HotkeyDisplayDock::openSettings()
 	auto *settingsDialog = new StreamupHotkeyDisplaySettings(this, this);
 	settingsDialog->setAttribute(Qt::WA_DeleteOnClose);
 
-	obs_data_t *settings = SaveLoadSettingsCallback(nullptr, false);
-	if (settings) {
-		settingsDialog->LoadSettings(settings);
-		obs_data_release(settings);
-	}
+	// The settings dialog constructor already loads current settings — no need
+	// to LoadSettings() again here (a duplicate load).
 
 	connect(settingsDialog, &QDialog::accepted, this, [this]() {
 		obs_data_t *settings = SaveLoadSettingsCallback(nullptr, false);

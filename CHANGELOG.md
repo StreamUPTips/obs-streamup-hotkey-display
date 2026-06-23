@@ -2,6 +2,18 @@
 
 ---
 
+## v1.2.2 (23 Jun '26)
+**Patch Focus:** Shared StreamUP UI design system
+- Rebuilt the settings dialog on the shared StreamUP UI library, the same design system now used across the StreamUP plugins, so controls look and behave consistently everywhere
+- Replaced the bordered group boxes with flat section headers (Text Source, Single Key Capture, Display)
+- Comboboxes are now Mac-style with an animated popup, spin boxes self-paint, and lists use the capsule scrollbars
+- Shortened the in-dialog title from "Hotkey Display Settings" to just "Settings" (the window already carries the StreamUP branding)
+- Apply is now a primary pill button and Close an outline pill, anchored in a footer with the version line
+- Fixed the settings window minimum width on high-DPI displays, where scaled and unscaled shadow margins were mixed
+- Removed a redundant second settings load when opening the dialog
+
+---
+
 ## v1.2.1 (14 Apr '26)
 **Patch Focus:** Window geometry fix
 - Fixed maximized window geometry being corrupted by dock state restoration
