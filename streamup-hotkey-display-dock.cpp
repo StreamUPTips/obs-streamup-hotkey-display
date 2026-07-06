@@ -7,6 +7,9 @@
 #include <QToolButton>
 #include <QThread>
 #include <obs-module.h>
+#include <streamup/ui/gallery-style.hpp> // S, scale_qss (dock keeps native theming but uses the scale helpers)
+
+using namespace StreamUP::UIStyles;
 
 // Fix #17: Platform-specific includes still needed for types used in enableHooks/disableHooks
 #ifdef _WIN32
@@ -52,33 +55,33 @@ HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 
 	// Set frame properties (matching OBS dock structure)
 	setContentsMargins(0, 0, 0, 0);
-	setMinimumWidth(100);
-	setMinimumHeight(50);
+	setMinimumWidth(S(100));
+	setMinimumHeight(S(50));
 
 	// Set layout properties - no margins/spacing (we'll add them manually)
 	layout->setContentsMargins(0, 0, 0, 0);
 	layout->setSpacing(0);
 
 	// Add top spacing (8px above label)
-	layout->addSpacing(8);
+	layout->addSpacing(S(8));
 
 	// Create a horizontal layout to add left/right margins to the label only
 	QHBoxLayout *labelLayout = new QHBoxLayout();
 	labelLayout->setObjectName("hotkeyDisplayLabelLayout");
-	labelLayout->setContentsMargins(8, 0, 8, 0); // 8px left and right margins
+	labelLayout->setContentsMargins(S(8), 0, S(8), 0); // 8px left and right margins
 	labelLayout->setSpacing(0);
 
 	label->setAlignment(Qt::AlignCenter);
 	label->setFrameShape(QFrame::NoFrame);
 	label->setFrameShadow(QFrame::Plain);
 	label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-	label->setMinimumHeight(40);
-	label->setMaximumHeight(80);
+	label->setMinimumHeight(S(40));
+	label->setMaximumHeight(S(80));
 	label->setWordWrap(true);
 	label->setProperty("hotkeyState", "inactive");
 
 	// Use theme-aware styling
-	label->setStyleSheet(
+	label->setStyleSheet(scale_qss(
 		"QLabel[hotkeyState=\"active\"] {"
 		"  border: 1px solid palette(highlight);"
 		"  border-radius: 4px;"
@@ -93,7 +96,7 @@ HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 		"  font-size: 14pt;"
 		"  background: palette(base);"
 		"}"
-	);
+	));
 
 	// Add label to the horizontal layout
 	labelLayout->addWidget(label);
@@ -102,7 +105,7 @@ HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 	layout->addLayout(labelLayout, 0);
 
 	// Add spacing between label and history (4px)
-	layout->addSpacing(4);
+	layout->addSpacing(S(4));
 
 	// Configure history list
 	historyList->setObjectName("hotkeyDisplayHistory");
@@ -111,25 +114,25 @@ HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 	historyList->setFrameShape(QFrame::NoFrame);
 	historyList->setSelectionMode(QAbstractItemView::NoSelection);
 	historyList->setFocusPolicy(Qt::NoFocus);
-	historyList->setStyleSheet(
+	historyList->setStyleSheet(scale_qss(
 		"QListWidget { background: palette(base); border: 1px solid palette(mid); border-radius: 4px; font-size: 10pt; }"
 		"QListWidget::item { padding: 4px 8px; }"
-		"QListWidget::item:hover { background: palette(midlight); }");
+		"QListWidget::item:hover { background: palette(midlight); }"));
 	historyList->setVisible(false);
 
 	// Add history in a horizontal layout with margins
 	QHBoxLayout *historyLayout = new QHBoxLayout();
-	historyLayout->setContentsMargins(8, 0, 8, 0);
+	historyLayout->setContentsMargins(S(8), 0, S(8), 0);
 	historyLayout->addWidget(historyList);
 	layout->addLayout(historyLayout, 1);
 
 	// Add spacing between history and toolbar (4px)
-	layout->addSpacing(4);
+	layout->addSpacing(S(4));
 
 	// Configure toolbar (matching OBS style)
 	toolbar->setMovable(false);
 	toolbar->setFloatable(false);
-	toolbar->setIconSize(QSize(16, 16));
+	toolbar->setIconSize(QSize(S(16), S(16)));
 
 	// Configure toggle action
 	toggleAction->setText(obs_module_text("Dock.Button.Enable"));
@@ -180,7 +183,7 @@ HotkeyDisplayDock::HotkeyDisplayDock(QWidget *parent)
 		if (toggleToolButton) {
 			toggleToolButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
 			toggleToolButton->setObjectName("hotkeyDisplayToggleButton");
-			toggleToolButton->setMinimumWidth(100); // Ensure enough space for text
+			toggleToolButton->setMinimumWidth(S(100)); // Ensure enough space for text
 			toggleToolButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 		}
 	}
@@ -304,11 +307,8 @@ void HotkeyDisplayDock::openSettings()
 	auto *settingsDialog = new StreamupHotkeyDisplaySettings(this, this);
 	settingsDialog->setAttribute(Qt::WA_DeleteOnClose);
 
-	obs_data_t *settings = SaveLoadSettingsCallback(nullptr, false);
-	if (settings) {
-		settingsDialog->LoadSettings(settings);
-		obs_data_release(settings);
-	}
+	// The settings dialog constructor already loads current settings — no need
+	// to LoadSettings() again here (a duplicate load).
 
 	connect(settingsDialog, &QDialog::accepted, this, [this]() {
 		obs_data_t *settings = SaveLoadSettingsCallback(nullptr, false);

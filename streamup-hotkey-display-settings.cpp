@@ -1,9 +1,26 @@
 #include "streamup-hotkey-display-settings.hpp"
 #include "streamup-hotkey-display.hpp"
 #include <obs-module.h>
+#include <streamup/ui/mac-inputs.hpp> // MacComboBox, MacSpinBox
+#include <streamup/ui/pill-button.hpp> // PillButton
+#include <streamup/ui/labels.hpp>      // labelStyle, sectionHeader
+#include <streamup/ui/glass.hpp>       // makeComboAnimated (combo slide-down animation)
+#include <streamup/ui/ui-scrollbar.hpp> // useScrollBars (capsule scrollbars)
+#include "version.h"                    // PROJECT_VERSION
+
+using namespace StreamUP::UIStyles;
+
+// Labeled switch row — replaces the old SwitchWidget. The canonical SwitchButton
+// renders its own inline label, so this is just construct + setText.
+static SwitchButton *makeSwitch(const QString &text, QWidget *parent)
+{
+	auto *s = new SwitchButton(parent);
+	s->setText(text);
+	return s;
+}
 
 StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *dock, QWidget *parent)
-	: QDialog(parent),
+	: ShadowDialog(parent),
 	  hotkeyDisplayDock(dock),
 	  sceneLayout(new QHBoxLayout()),
 	  sourceLayout(new QHBoxLayout()),
@@ -16,70 +33,74 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	  suffixLabel(new QLabel(obs_module_text("Settings.Label.Suffix"), this)),
 	  prefixLineEdit(new QLineEdit(this)),
 	  suffixLineEdit(new QLineEdit(this)),
-	  sceneComboBox(new QComboBox(this)),
-	  sourceComboBox(new QComboBox(this)),
-	  timeSpinBox(new QSpinBox(this)),
-	  displayInTextSourceCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.DisplayInTextSource"), this)),
-	  textSourceGroupBox(new QGroupBox(obs_module_text("Settings.Group.TextSource"), this)),
-	  singleKeyGroupBox(new QGroupBox(obs_module_text("Settings.Group.SingleKeyCapture"), this)),
-	  captureNumpadCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CaptureNumpad"), this)),
-	  captureNumbersCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CaptureNumbers"), this)),
-	  captureLettersCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CaptureLetters"), this)),
-	  capturePunctuationCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CapturePunctuation"), this)),
-	  captureStandaloneMouseCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.CaptureStandaloneMouse"), this)),
+	  sceneComboBox(new MacComboBox(this)),
+	  sourceComboBox(new MacComboBox(this)),
+	  timeSpinBox(new MacSpinBox(this)),
+	  displayInTextSourceCheckBox(makeSwitch(obs_module_text("Settings.Checkbox.DisplayInTextSource"), this)),
+	  textSourceGroupBox(new QWidget(this)),
+	  singleKeyGroupBox(new QWidget(this)),
+	  captureNumpadCheckBox(makeSwitch(obs_module_text("Settings.Checkbox.CaptureNumpad"), this)),
+	  captureNumbersCheckBox(makeSwitch(obs_module_text("Settings.Checkbox.CaptureNumbers"), this)),
+	  captureLettersCheckBox(makeSwitch(obs_module_text("Settings.Checkbox.CaptureLetters"), this)),
+	  capturePunctuationCheckBox(makeSwitch(obs_module_text("Settings.Checkbox.CapturePunctuation"), this)),
+	  captureStandaloneMouseCheckBox(makeSwitch(obs_module_text("Settings.Checkbox.CaptureStandaloneMouse"), this)),
 	  whitelistLabel(new QLabel(obs_module_text("Settings.Label.Whitelist"), this)),
 	  separatorLabel(new QLabel(obs_module_text("Settings.Label.Separator"), this)),
 	  separatorLineEdit(new QLineEdit(this)),
 	  maxHistoryLabel(new QLabel(obs_module_text("Settings.Label.MaxHistory"), this)),
-	  maxHistorySpinBox(new QSpinBox(this)),
-	  enableLoggingCheckBox(new SwitchWidget(obs_module_text("Settings.Checkbox.EnableLogging"), this))
+	  maxHistorySpinBox(new MacSpinBox(this)),
+	  enableLoggingCheckBox(makeSwitch(obs_module_text("Settings.Checkbox.EnableLogging"), this))
 {
 	// Apply StreamUP dialog chrome (frameless window with custom title bar)
-	DialogChrome chrome = ApplyDialogChrome(this, obs_module_text("Settings.Title"));
-	mainLayout = chrome.contentLayout;
-	buttonLayout = new QHBoxLayout();
+	// brandFooter=true → SoT brand line + taskbar button/thumbnail (WS_EX_APPWINDOW).
+	WindowShell chrome = applyChrome(this, obs_module_text("Settings.Title"), "v" PROJECT_VERSION,
+					/*brandFooter=*/true, "StreamUP Hotkey Display");
+	mainLayout = chrome.content;
 
 	// Create styled buttons
-	applyButton = CreateStyledButton(obs_module_text("Settings.Button.Apply"), "primary");
-	closeButton = CreateStyledButton(obs_module_text("Settings.Button.Close"), "default");
+	applyButton = new PillButton(obs_module_text("Settings.Button.Apply"), "primary");
+	closeButton = new PillButton(obs_module_text("Settings.Button.Close"), "outline");
 
 	setAccessibleName(obs_module_text("Settings.Title"));
 	setAccessibleDescription(obs_module_text("Settings.Description"));
 
-	setMinimumWidth(550);
+	// Content min-width + both scaled shadow margins (the chrome's outer layout
+	// reserves S(kShadowMargin) each side — keep this consistent so it doesn't
+	// mix scaled + unscaled).
+	setMinimumWidth(S(550) + 2 * S(ShadowDialog::kShadowMargin));
 
 	// Create QPlainTextEdit for whitelist (replaces QLineEdit)
 	whitelistTextEdit = new QPlainTextEdit(this);
-	whitelistTextEdit->setMinimumHeight(80);
+	whitelistTextEdit->setMinimumHeight(S(80));
 
 	// Create Display Settings group box
-	displayGroupBox = new QGroupBox(obs_module_text("Settings.Group.Display"), this);
+	displayGroupBox = new QWidget(this);
 
-	// Apply Catppuccin Mocha styles
-	textSourceGroupBox->setStyleSheet(GetGroupBoxStyle());
-	singleKeyGroupBox->setStyleSheet(GetGroupBoxStyle());
-	displayGroupBox->setStyleSheet(GetGroupBoxStyle());
+	// Sections are plain widgets now (titled by a sectionHeader in their layout);
+	// combos/spins are the canonical custom-painted Mac widgets — popup styled for
+	// the combos, spins self-paint.
+	// Combos: opaque popup + slide-down animation + capsule scrollbar (SoT combo).
+	sceneComboBox->setStyleSheet(comboStyle(false));
+	sourceComboBox->setStyleSheet(comboStyle(false));
+	for (QComboBox *cb : {sceneComboBox, sourceComboBox}) {
+		makeComboAnimated(cb);
+		useScrollBars(cb->view());
+	}
 
-	sceneComboBox->setStyleSheet(GetComboBoxStyle());
-	sourceComboBox->setStyleSheet(GetComboBoxStyle());
+	prefixLineEdit->setStyleSheet(lineEditStyle());
+	suffixLineEdit->setStyleSheet(lineEditStyle());
+	separatorLineEdit->setStyleSheet(lineEditStyle());
 
-	timeSpinBox->setStyleSheet(GetSpinBoxStyle());
-	maxHistorySpinBox->setStyleSheet(GetSpinBoxStyle());
+	whitelistTextEdit->setStyleSheet(plainTextStyle());
 
-	prefixLineEdit->setStyleSheet(GetInputStyle());
-	suffixLineEdit->setStyleSheet(GetInputStyle());
-	separatorLineEdit->setStyleSheet(GetInputStyle());
-
-	whitelistTextEdit->setStyleSheet(GetPlainTextEditStyle());
-
-	sceneLabel->setStyleSheet(GetLabelStyle());
-	sourceLabel->setStyleSheet(GetLabelStyle());
-	timeLabel->setStyleSheet(GetLabelStyle());
-	prefixLabel->setStyleSheet(GetLabelStyle());
-	suffixLabel->setStyleSheet(GetLabelStyle());
-	whitelistLabel->setStyleSheet(GetLabelStyle());
-	separatorLabel->setStyleSheet(GetLabelStyle());
-	maxHistoryLabel->setStyleSheet(GetLabelStyle());
+	sceneLabel->setStyleSheet(labelStyle());
+	sourceLabel->setStyleSheet(labelStyle());
+	timeLabel->setStyleSheet(labelStyle());
+	prefixLabel->setStyleSheet(labelStyle());
+	suffixLabel->setStyleSheet(labelStyle());
+	whitelistLabel->setStyleSheet(labelStyle());
+	separatorLabel->setStyleSheet(labelStyle());
+	maxHistoryLabel->setStyleSheet(labelStyle());
 
 	// Configure tooltips and accessibility
 	sceneComboBox->setToolTip(obs_module_text("Settings.Tooltip.Scene"));
@@ -150,6 +171,7 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 
 	// Create and configure textSourceGroupBox layout
 	QVBoxLayout *textSourceLayout = new QVBoxLayout();
+	textSourceLayout->addWidget(sectionHeader(obs_module_text("Settings.Group.TextSource")));
 	textSourceLayout->addLayout(sceneLayout);
 	textSourceLayout->addLayout(sourceLayout);
 	textSourceLayout->addLayout(prefixLayout);
@@ -162,6 +184,7 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 
 	// Create and configure singleKeyGroupBox layout
 	QVBoxLayout *singleKeyLayout = new QVBoxLayout();
+	singleKeyLayout->addWidget(sectionHeader(obs_module_text("Settings.Group.SingleKeyCapture")));
 	singleKeyLayout->addWidget(captureNumpadCheckBox);
 	singleKeyLayout->addWidget(captureNumbersCheckBox);
 	singleKeyLayout->addWidget(captureLettersCheckBox);
@@ -186,7 +209,7 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	// Configure separator line edit
 	separatorLineEdit->setToolTip(obs_module_text("Settings.Tooltip.Separator"));
 	separatorLineEdit->setPlaceholderText(" + ");
-	separatorLineEdit->setMaximumWidth(80);
+	separatorLineEdit->setMaximumWidth(S(80));
 
 	// Configure max history spin box
 	maxHistorySpinBox->setToolTip(obs_module_text("Settings.Tooltip.MaxHistory"));
@@ -203,26 +226,29 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 
 	// Create and configure displayGroupBox layout
 	QVBoxLayout *displayLayout = new QVBoxLayout();
+	displayLayout->addWidget(sectionHeader(obs_module_text("Settings.Group.Display")));
 	displayLayout->addLayout(separatorLayout);
 	displayLayout->addLayout(maxHistoryLayout);
 	displayLayout->addLayout(timeLayout);
 	displayLayout->addWidget(enableLoggingCheckBox);
 	displayGroupBox->setLayout(displayLayout);
 
-	// Two-column layout
+	// Two-column layout. applyChrome()'s content area has zero padding (unlike the
+	// old ApplyDialogChrome), so the columns set their own content margins.
 	QHBoxLayout *columnsLayout = new QHBoxLayout();
-	columnsLayout->setSpacing(20);
+	columnsLayout->setContentsMargins(S(20), S(16), S(20), S(16));
+	columnsLayout->setSpacing(S(20));
 
 	QVBoxLayout *leftCol = new QVBoxLayout();
-	leftCol->setSpacing(14);
+	leftCol->setSpacing(S(14));
 	QVBoxLayout *rightCol = new QVBoxLayout();
-	rightCol->setSpacing(14);
+	rightCol->setSpacing(S(14));
 
 	leftCol->addWidget(singleKeyGroupBox);
 	leftCol->addStretch();
 
 	rightCol->addWidget(displayGroupBox);
-	rightCol->addSpacing(8);
+	rightCol->addSpacing(S(8));
 	rightCol->addWidget(displayInTextSourceCheckBox);
 	rightCol->addWidget(textSourceGroupBox);
 	rightCol->addStretch();
@@ -232,9 +258,10 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	mainLayout->addLayout(columnsLayout);
 
 	// Add buttons to footer layout
-	buttonLayout->addWidget(applyButton);
-	buttonLayout->addWidget(closeButton);
-	chrome.footerLayout->addLayout(buttonLayout);
+	// Action buttons go in the footer's right-anchored slot, inline with the
+	// brand line (Cancel/Close = outline on the left, primary on the right).
+	chrome.footerButtons->addWidget(closeButton);
+	chrome.footerButtons->addWidget(applyButton);
 
 	// Set up proper tab order for keyboard navigation
 	setTabOrder(captureNumpadCheckBox, captureNumbersCheckBox);
@@ -257,7 +284,7 @@ StreamupHotkeyDisplaySettings::StreamupHotkeyDisplaySettings(HotkeyDisplayDock *
 	connect(applyButton, &QPushButton::clicked, this, &StreamupHotkeyDisplaySettings::applySettings);
 	connect(closeButton, &QPushButton::clicked, this, &StreamupHotkeyDisplaySettings::close);
 	connect(sceneComboBox, &QComboBox::currentTextChanged, this, &StreamupHotkeyDisplaySettings::onSceneChanged);
-	connect(displayInTextSourceCheckBox->switchBtn, &SwitchButton::toggled, this,
+	connect(displayInTextSourceCheckBox, &SwitchButton::toggled, this,
 		&StreamupHotkeyDisplaySettings::onDisplayInTextSourceToggled);
 
 	// Load current settings

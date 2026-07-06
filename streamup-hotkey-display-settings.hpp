@@ -9,12 +9,12 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
-#include <QGroupBox>
 #include <obs-frontend-api.h>
 #include "streamup-hotkey-display-dock.hpp"
-#include "streamup-ui.hpp"
+#include <streamup/ui/window-chrome.hpp> // ShadowDialog, applyChrome, WindowShell
+#include <streamup/ui/switch-button.hpp> // SwitchButton, CreateStyledSwitch
 
-class StreamupHotkeyDisplaySettings : public QDialog {
+class StreamupHotkeyDisplaySettings : public StreamUP::UIStyles::ShadowDialog {
 	Q_OBJECT
 
 public:
@@ -44,7 +44,6 @@ public:
 private:
 	HotkeyDisplayDock *hotkeyDisplayDock;
 	QVBoxLayout *mainLayout;
-	QHBoxLayout *buttonLayout;
 	QHBoxLayout *sceneLayout;
 	QHBoxLayout *sourceLayout;
 	QHBoxLayout *prefixLayout;
@@ -61,21 +60,21 @@ private:
 	QSpinBox *timeSpinBox;
 	QPushButton *applyButton;
 	QPushButton *closeButton;
-	SwitchWidget *displayInTextSourceCheckBox;
-	QGroupBox *textSourceGroupBox;
+	StreamUP::UIStyles::SwitchButton *displayInTextSourceCheckBox;
+	QWidget *textSourceGroupBox;
 
 	// Single key capture UI elements
-	QGroupBox *singleKeyGroupBox;
-	SwitchWidget *captureNumpadCheckBox;
-	SwitchWidget *captureNumbersCheckBox;
-	SwitchWidget *captureLettersCheckBox;
-	SwitchWidget *capturePunctuationCheckBox;
-	SwitchWidget *captureStandaloneMouseCheckBox;
+	QWidget *singleKeyGroupBox;
+	StreamUP::UIStyles::SwitchButton *captureNumpadCheckBox;
+	StreamUP::UIStyles::SwitchButton *captureNumbersCheckBox;
+	StreamUP::UIStyles::SwitchButton *captureLettersCheckBox;
+	StreamUP::UIStyles::SwitchButton *capturePunctuationCheckBox;
+	StreamUP::UIStyles::SwitchButton *captureStandaloneMouseCheckBox;
 	QLabel *whitelistLabel;
 	QPlainTextEdit *whitelistTextEdit;
 
 	// Display settings group
-	QGroupBox *displayGroupBox;
+	QWidget *displayGroupBox;
 
 	// Display format UI elements
 	QLabel *separatorLabel;
@@ -84,7 +83,7 @@ private:
 	QSpinBox *maxHistorySpinBox;
 
 	// Logging UI elements
-	SwitchWidget *enableLoggingCheckBox;
+	StreamUP::UIStyles::SwitchButton *enableLoggingCheckBox;
 
 private slots:
 	void applySettings();

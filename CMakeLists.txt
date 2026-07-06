@@ -35,6 +35,22 @@ if(BUILD_OUT_OF_TREE)
 endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt::Core Qt::Widgets)
 
+# Shared StreamUP custom-window UI design system (obs-streamup-ui-gallery),
+# vendored under shared/obs-streamup-ui/. Compiled directly into the plugin
+# (header-only + one moc'd .cpp) so each plugin is self-contained: no shared
+# sub-target, no cross-plugin link, builds in any config/order.
+set(STREAMUP_UI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shared/obs-streamup-ui")
+target_include_directories(${PROJECT_NAME} PRIVATE
+  "${STREAMUP_UI_DIR}/include"
+  "${STREAMUP_UI_DIR}/include/streamup/ui" # flat includes inside switch-button.cpp
+)
+target_sources(${PROJECT_NAME} PRIVATE
+  "${STREAMUP_UI_DIR}/src/switch-button.cpp"
+  "${STREAMUP_UI_DIR}/src/feedback.cpp" # shared in-app feedback dialog
+  "${STREAMUP_UI_DIR}/include/streamup/ui/switch-button.hpp" # Q_OBJECT -> AUTOMOC
+  "${STREAMUP_UI_DIR}/include/streamup/ui/ios-checkbox.hpp"  # Q_OBJECT -> AUTOMOC
+)
+
 # Fix #15: Removed unused CURL dependency
 
 # Determine shared directory path (support both in-tree and out-of-tree builds)
@@ -92,7 +108,6 @@ target_sources(${PROJECT_NAME} PRIVATE
   streamup-hotkey-display-dock.hpp
   streamup-hotkey-display-settings.cpp
   streamup-hotkey-display-settings.hpp
-  streamup-ui.hpp
   obs-websocket-api.h
   resources.qrc
   version.h
